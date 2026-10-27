@@ -1,0 +1,138 @@
+Desktop AI Task Assistant
+Press a hotkey, describe the task, and it gets done correctly in Jira, Microsoft 365 and any MCP tool
+Hotkey anywhere
+A Windows tray app. No forms and no 
+switching between tools.
+Asks before it acts
+Questions until every value is real and 
+checked, then a confirmation card.
+Any tool, user-connected
+Jira first, then Microsoft 365, 
+ServiceNow and any MCP server.
+Architecture and tech stack options  ·  October 2026
+Desktop AI Task Assistant  ·  Architecture and tech stack options
+Nothing changes until every value is checked
+1
+Open
+Press the hotkey 
+and type the task
+2
+Understand
+Works out the 
+action and which 
+tool
+3
+Look up
+Fetches projects, 
+fields and people
+4
+Ask
+One question at 
+a time: choices 
+plus free text
+5
+Confirm
+A card shows 
+every value; 
+assumed ones 
+are flagged
+6
+Do and report
+Acts as you, links 
+the result, logs it
+Repeats until it has enough, or you press Stop
+Looks up before asking
+Lists, people and allowed values 
+are fetched and offered as 
+choices.
+Never invents a value
+Stop early and gaps are filled 
+only from tool defaults or your 
+preferences, labelled assumed.
+Shows what goes to people
+Emails and Teams messages 
+show the exact recipients and 
+full text first.
+2
+Desktop AI Task Assistant  ·  Architecture and tech stack options
+One core does the work; tools plug in
+Desktop shell Hotkey and tray Chat window Connections page
+Core Intent and routing Questionnaire Planner Executor
+Connections JiraMVP Microsoft 365Phase 2 Custom MCPPhase 3 ServiceNowPhase 3
+Shared Credential vault  ·  Schema cache  ·  Audit log  ·  LLM gateway
+Built this way because
+Local first
+Runs on the user's PC. The core has 
+no UI code, so it can move to a 
+server later.
+User-managed tools
+Users add their own connections, 
+several per tool, and requests are 
+routed between them.
+One contract per tool
+Every connector offers schema, 
+lookup, validate and execute.
+3
+Desktop AI Task Assistant  ·  Architecture and tech stack options
+Ship Jira first, then widen the reach
+MVP
+Jira, done right
+• Jira Cloud and Data 
+Center
+• Connections and routing
+• Questionnaire, 
+confirmation, audit log
+PHASE 2
+Microsoft 365 
+workflows
+• Teams, Outlook, To Do, 
+OneDrive
+• Workflows across Jira 
+and Microsoft 365
+• People matched across 
+tools
+PHASE 3
+Open ecosystem
+• Custom MCP 
+connections
+• ServiceNow connector
+• Quality questions, 
+screenshot capture
+PHASE 4
+Deflection and 
+automation
+• Answers from the 
+knowledge base
+• Duplicate detection
+• Proactive status updates
+Already decided Local-first core User-managed connections Guided + Expert profiles Jira Cloud + Data Center Settings per user
+4
+Desktop AI Task Assistant  ·  Architecture and tech stack options
+Recommended stack: TypeScript on Electron
+RECOMMENDED
+A  ·  Electron + TypeScript
+STRENGTH
+Fastest to ship. Best MCP , Claude SDK 
+and chat UI ecosystem.
+WATCH
+Install size and memory for an always-on 
+tray app
+B  ·  Tauri + TypeScript
+STRENGTH
+Small install, light on memory.
+WATCH
+Two runtimes (Rust + Node) to package 
+and debug
+C  ·  .NET (WinUI 3) + C#
+STRENGTH
+Best Microsoft 365 sign-in and Intune 
+rollout.
+WATCH
+Slower chat UI work
+Decisions needed, then we split the MVP into build tasks
+Team's main language
+If the team writes C# daily, choose option C instead.
+LLM provider and data rules
+Claude via the Anthropic API or Microsoft Foundry, and 
+what data may leave the machine.
+5

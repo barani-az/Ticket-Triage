@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:">
+<title>AI Task Assistant</title>
+<style>
+  /* One accent (indigo) on neutral greys; status colours only for status. Contrast checked for AA. */
+  :root {
+    --bg: #ffffff;
+    --bg-2: #f6f7f9;          /* chips, hovered rows */
+    --text: #0f172a;
+    --muted: #5b6577;
+    --line: #e4e7ec;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+    --accent-soft: #eef0ff;   /* tinted background for accent things */
+    --on-accent: #ffffff;
+    --ok: #15803d;  --ok-soft: #e8f6ee;
+    --bad: #b91c1c; --bad-soft: #fdecec;
+    --warn: #92400e; --warn-soft: #fef4e0;
+    --shadow: 0 16px 48px rgba(15, 23, 42, .22), 0 2px 8px rgba(15, 23, 42, .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181d;
+      --bg-2: #22242b;
+      --text: #f1f3f7;
+      --muted: #9aa3b5;
+      --line: #2e313a;
+      --accent: #8b8dfc;
+      --accent-hover: #a2a4ff;
+      --accent-soft: #272a45;
+      --on-accent: #12131a;
+      --ok: #5fd38d;  --ok-soft: #17301f;
+      --bad: #ff8a8a; --bad-soft: #3a1d1f;
+      --warn: #f6c065; --warn-soft: #36290f;
+      --shadow: 0 16px 48px rgba(0, 0, 0, .65), 0 2px 8px rgba(0, 0, 0, .4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: transparent; }
+  /* The body's padding is room for the shadow; the window itself is transparent. */
+  body { padding: 14px; font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+  #shell { max-width: 680px; margin: 0 auto; background: var(--bg); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+
+  #bar { -webkit-app-region: drag; display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px 0 18px; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); flex: none; }
+  #dot.busy { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; transform: scale(.85); } }
+  #input { -webkit-app-region: no-drag; flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 17px; caret-color: var(--accent); }
+  #input::placeholder { color: var(--muted); }
+  .kbd { color: var(--muted); font-size: 11px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; flex: none; }
+
+  #out { border-top: 1px solid var(--line); padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; max-height: 470px; overflow-y: auto; }
+  /* Fixed on purpose: tying this to the viewport height would stop the window from ever growing,
+     because the window height follows the content height. */
+  #out[hidden], #foot[hidden] { display: none; }
+  #out::-webkit-scrollbar { width: 8px; }
+  #out::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
+
+  .echo { color: var(--muted); }
+  .info { color: var(--muted); font-size: 13px; }
+  .q-text { font-weight: 600; font-size: 15px; }
+  .err, .bad { color: var(--bad); background: var(--bad-soft); border-radius: 10px; padding: 8px 12px; font-size: 13px; }
+  .warn { color: var(--warn); background: var(--warn-soft); border-radius: 10px; padding: 8px 12px; font-size: 13px; margin-top: 8px; }
+
+  .choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 6px 12px; transition: background .12s, border-color .12s; }
+  button:hover { border-color: var(--accent); background: var(--accent-soft); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.link { background: none; border: 0; color: var(--muted); padding: 2px 4px; font-size: 12px; }
+  button.link:hover { background: none; color: var(--text); text-decoration: underline; }
+  button small { color: var(--muted); margin-left: 8px; font-size: 12px; }
+  button .n { display: inline-block; min-width: 18px; text-align: center; margin-right: 8px; font-size: 11px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 5px; padding: 1px 0; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--bg-2); border-radius: 8px; padding: 3px 10px; font-size: 12.5px; }
+  .chip b { color: var(--muted); font-weight: 500; margin-right: 6px; text-transform: capitalize; }
+  .chip.assumed { background: var(--warn-soft); color: var(--warn); }
+  .row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+
+  .result { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; background: var(--ok-soft); border-radius: 12px; padding: 10px 14px; }
+  .result:has(.bad) { background: none; padding: 0; }
+  .result .ok { color: var(--ok); font-weight: 600; }
+  .result a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .result a:hover { text-decoration: underline; }
+
+  #foot { border-top: 1px solid var(--line); background: var(--bg-2); padding: 8px 18px; display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font-size: 11.5px; }
+  #foot .d { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: var(--bad); }
+  #foot .d.ok { background: var(--ok); }
+</style>
+</head>
+<body>
+<div id="shell">
+  <div id="bar">
+    <span id="dot"></span>
+    <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="Describe a ticket to create…" aria-label="Request">
+    <span class="kbd">Esc</span>
+  </div>
+  <div id="out" hidden aria-live="polite"></div>
+  <div id="foot" hidden></div>
+</div>
+<script>
+const input = document.getElementById('input');
+const out = document.getElementById('out');
+const foot = document.getElementById('foot');
+const dot = document.getElementById('dot');
+const shell = document.getElementById('shell');
+const DEFAULT_PLACEHOLDER = input.placeholder;
+
+// Inside the desktop window the preload bridge exists; in a plain browser fall back to HTTP.
+const bridge = window.api;
+const post = path => body => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+const transport = bridge
+  ? { send: m => bridge.send(m), connections: () => bridge.connections() }
+  : { send: post('/api/message'), connections: () => fetch('/api/connections').then(r => r.json()) };
+
+let pending = null;      // the question waiting for an answer
+let questionEl = null;
+let draftEl = null;
+let busy = false;
+
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v; else if (k.startsWith('on')) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid) e.append(typeof kid === 'string' ? document.createTextNode(kid) : kid);
+  return e;
+}
+
+function show() { out.hidden = false; foot.hidden = false; }
+function reset() { out.replaceChildren(); out.hidden = true; foot.hidden = true; pending = null; questionEl = null; draftEl = null; input.placeholder = DEFAULT_PLACEHOLDER; }
+function add(node) { show(); out.append(node); out.scrollTop = out.scrollHeight; return node; }
+function setBusy(b) { busy = b; dot.classList.toggle('busy', b); }
+
+async function send(msg) {
+  setBusy(true);
+  try {
+    const msgs = await transport.send(msg);
+    if (!Array.isArray(msgs)) add(el('div', { class: 'err', text: (msgs && msgs.error) || 'Something went wrong.' }));
+    else for (const m of msgs) render(m);
+  } catch (e) {
+    add(el('div', { class: 'err', text: String(e && e.message || e) }));
+  }
+  setBusy(false);
+  input.focus();
+}
+
+function render(m) {
+  if (m.type === 'info') add(el('div', { class: 'info', text: m.text }));
+  else if (m.type === 'error') add(el('div', { class: 'err', text: m.message }));
+  else if (m.type === 'draft') renderDraft(m);
+  else if (m.type === 'question') renderQuestion(m.question);
+  else if (m.type === 'card') renderCard(m);
+  else if (m.type === 'result') renderResult(m);
+}
+
+function chip(label, value, assumed) {
+  return el('span', { class: 'chip' + (assumed ? ' assumed' : '') }, el('b', { text: label }), value + (assumed ? ' (assumed)' : ''));
+}
+
+function renderDraft(m) {
+  if (draftEl) draftEl.remove();
+  if (!m.rows.length) { draftEl = null; return; }
+  draftEl = el('div', { class: 'chips' }, ...m.rows.map(r => chip(r.field, r.value, r.assumed)));
+  show();
+  out.insertBefore(draftEl, questionEl && questionEl.isConnected ? questionEl : null);
+}
+
+function answerWith(choice) {
+  add(el('div', { class: 'echo', text: '→ ' + choice.label }));
+  clearQuestion();
+  send({ type: 'answer', choiceId: choice.id });
+}
+function clearQuestion() { if (questionEl) questionEl.remove(); questionEl = null; pending = null; input.placeholder = DEFAULT_PLACEHOLDER; }
+
+function renderQuestion(q) {
+  clearQuestion();
+  pending = q;
+  input.placeholder = 'Type an answer, or pick a number…';
+  const choices = el('div', { class: 'choices' }, ...q.choices.map((c, i) =>
+    el('button', { type: 'button', onclick: () => answerWith(c) }, el('span', { class: 'n', text: String(i + 1) }), c.label, c.detail ? el('small', { text: c.detail }) : null)));
+  questionEl = el('div', {}, el('div', { class: 'q-text', text: q.text }), q.choices.length ? choices : null,
+    q.field === '__tool' ? null : el('div', { class: 'row' }, el('button', { class: 'link', type: 'button', text: 'Stop asking and use defaults', onclick: () => { add(el('div', { class: 'echo', text: '→ stop asking' })); clearQuestion(); send({ type: 'stop' }); } })));
+  add(questionEl);
+}
+
+function renderCard(m) {
+  clearQuestion();
+  if (draftEl) { draftEl.remove(); draftEl = null; } // the card shows the same values
+  const box = el('div', {}, el('div', { class: 'q-text', text: m.card.title + ' on ' + m.card.connectionName }),
+    el('div', { class: 'chips', style: 'margin-top:8px' }, ...m.card.rows.map(r => chip(r.title, r.value, r.assumed))));
+  for (const w of m.card.warnings) box.append(el('div', { class: 'warn', text: w }));
+  for (const e of m.errors) box.append(el('div', { class: 'bad', text: e }));
+  if (m.unresolved.length) box.append(el('div', { class: 'bad', text: 'Missing, and no real value is available: ' + m.unresolved.join(', ') }));
+  const row = el('div', { class: 'row' });
+  if (m.canConfirm) {
+    // On a live site the first click only arms the button, so one stray click cannot create a real issue.
+    const live = m.card.warnings.some(w => /real issue/.test(w));
+    const btn = el('button', { class: 'primary', type: 'button', text: live ? 'Create real issue…' : 'Confirm' });
+    btn.addEventListener('click', () => {
+      if (!live || btn.dataset.armed) { box.remove(); return send({ type: 'confirm' }); }
+      btn.dataset.armed = '1'; btn.textContent = 'Click again to create';
+      setTimeout(() => { delete btn.dataset.armed; btn.textContent = 'Create real issue…'; }, 4000);
+    });
+    row.append(btn);
+  }
+  if (m.options.includes('answer-one')) row.append(el('button', { type: 'button', text: 'Answer just that one', onclick: () => { box.remove(); send({ type: 'fallback', option: 'answer-one' }); } }));
+  if (m.options.includes('save-draft')) row.append(el('button', { type: 'button', text: 'Save as draft', onclick: () => { box.remove(); send({ type: 'fallback', option: 'save-draft' }); } }));
+  row.append(el('button', { type: 'button', text: 'Cancel', onclick: () => { box.remove(); send({ type: 'cancel' }); } }));
+  box.append(row);
+  add(box);
+}
+
+function renderResult(m) {
+  clearQuestion();
+  const box = el('div', { class: 'result' });
+  if (m.ok) {
+    box.append(el('span', { class: 'ok', text: '✓ ' + m.text }));
+    if (m.url) box.append(el('a', { href: m.url, target: '_blank', rel: 'noopener', text: 'Open in Jira ↗' }));
+  } else {
+    box.append(el('div', { class: 'bad', text: 'Not created: ' + m.text }));
+  }
+  add(box);
+}
+
+input.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || busy) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  if (pending) {
+    add(el('div', { class: 'echo', text: '→ ' + text }));
+    clearQuestion();
+    send({ type: 'answer', text });
+  } else {
+    reset();
+    add(el('div', { class: 'echo', text: '› ' + text }));
+    send({ type: 'submit', text });
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && bridge) bridge.hide();
+  // With an empty input, a digit picks the matching choice.
+  if (pending && input.value === '' && /^[1-9]$/.test(e.key)) {
+    const c = pending.choices[Number(e.key) - 1];
+    if (c) { e.preventDefault(); answerWith(c); }
+  }
+});
+
+async function loadStatus() {
+  try {
+    const r = await transport.connections();
+    foot.replaceChildren(
+      ...r.connections.map(c => el('span', { title: c.status.ok ? '' : c.status.error }, el('i', { class: 'd' + (c.status.ok ? ' ok' : '') }), c.name)),
+      el('span', { text: r.llm ? 'Gemini on' : 'built-in rules' }),
+      el('span', { text: r.autoCreate ? 'creates without asking' : 'asks before creating' }),
+    );
+  } catch { /* the footer is optional */ }
+}
+
+// The desktop window follows the content: tell the main process how tall the palette is.
+if (bridge) new ResizeObserver(() => bridge.resize(Math.ceil(shell.getBoundingClientRect().height) + 28)).observe(shell);
+if (bridge) bridge.onFocus(() => { input.focus(); input.select(); loadStatus(); });
+loadStatus();
+input.focus();
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "name": "desktop-ai-task-assistant-demo",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.cjs",
+  "description": "Small demo: chat-driven Jira ticket creation through a connector and an MCP connection",
+  "scripts": {
+    "build:desktop": "node scripts/build.mjs",
+    "desktop": "node scripts/build.mjs && electron .",
+    "smoke:desktop": "node scripts/build.mjs && node scripts/smoke.mjs",
+    "web": "tsx src/server/main.ts",
+    "demo": "tsx src/server/main.ts",
+    "mock-jira": "tsx src/mock/jiraMockMain.ts",
+    "mcp:discover": "tsx src/mcp/discover.ts",
+    "verify:rovo": "tsx src/mcp/verifyRovo.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ajv": "^8.20.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "electron": "^45.0.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
