@@ -15,7 +15,10 @@
     "mcp:discover": "tsx src/mcp/discover.ts",
     "verify:rovo": "tsx src/mcp/verifyRovo.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "demo:video": "node scripts/build.mjs && node scripts/record.mjs",
+    "demo:video:jira": "node scripts/build.mjs && node scripts/record.mjs --rovo --jira",
+    "demo:jira-login": "node scripts/record.mjs --login"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

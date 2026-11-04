@@ -3,6 +3,7 @@ import path from 'node:path';
 import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
 import type { UiToCore } from '../core/session.js';
 import { createApp, type App } from '../server/app.js';
+import { recordDemo } from './demo.js';
 import { parseEnv } from './env.js';
 import { registerHotkey } from './hotkey.js';
 
@@ -16,6 +17,8 @@ const MIN_HEIGHT = 84; // just the input bar plus room for its shadow
 const MAX_HEIGHT = 640;
 const HOTKEYS = [process.env.HOTKEY, 'Control+Shift+Space', 'Control+Alt+Space', 'Control+Alt+J'].filter(Boolean) as string[];
 const SMOKE = process.env.SMOKE === '1';
+const DEMO = process.env.DEMO === '1';
+const DEMO_HEIGHT = 600; // fixed while recording, so every captured frame is the same size
 
 const dataDir = app.isPackaged ? app.getPath('userData') : path.join(app.getAppPath(), 'data');
 fs.mkdirSync(dataDir, { recursive: true });
@@ -164,7 +167,7 @@ function wireIpc() {
   ipcMain.on('assistant:hide', () => win?.hide());
   // The page reports how tall it is; the window grows or shrinks to match, anchored at the top.
   ipcMain.on('assistant:resize', (_e, height: unknown) => {
-    if (!win || typeof height !== 'number' || !Number.isFinite(height)) return;
+    if (!win || DEMO || typeof height !== 'number' || !Number.isFinite(height)) return;
     const { workArea } = screen.getDisplayMatching(win.getBounds());
     const max = Math.min(MAX_HEIGHT, workArea.height - 40);
     win.setContentSize(WIDTH, Math.round(Math.max(MIN_HEIGHT, Math.min(height, max))));
@@ -231,6 +234,15 @@ if (!app.requestSingleInstanceLock()) {
 
     if (SMOKE) {
       await smokeTest();
+      await core.close();
+      app.exit(0);
+    } else if (DEMO) {
+      settings.autoCreate = false; // the demo is about the confirmation card
+      await new Promise<void>((r) => win!.webContents.once('did-finish-load', () => r()));
+      win!.setContentSize(WIDTH, DEMO_HEIGHT);
+      win!.showInactive();
+      const demo = await recordDemo(win!, path.join(dataDir, 'frames'), JSON.parse(process.env.DEMO_SCRIPT!));
+      console.log(`DEMO ${demo.frames} frames, created: ${demo.created.join(', ') || 'nothing'}`);
       await core.close();
       app.exit(0);
     } else if (!hk.ok) {
