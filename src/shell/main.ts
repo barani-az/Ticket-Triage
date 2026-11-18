@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, shell, Tray } from 'electron';
 import type { UiToCore } from '../core/session.js';
 import { createApp, type App } from '../server/app.js';
 import { recordDemo } from './demo.js';
@@ -12,9 +12,13 @@ import { registerHotkey } from './hotkey.js';
  * (asking only for what is missing). The core runs in this process for now; the plan moves it
  * into a utility process.
  */
-const WIDTH = 680;
-const MIN_HEIGHT = 84; // just the input bar plus room for its shadow
-const MAX_HEIGHT = 640;
+// "Glass" = the window sits on Windows acrylic (Windows 11 build 22621+). Otherwise it falls back to a
+// transparent window with a CSS shadow, which needs 16px of padding around the page.
+const GLASS = process.platform === 'win32' && Number(process.getSystemVersion().split('.')[2]) >= 22621 && process.env.NO_GLASS !== '1';
+const PAD = GLASS ? 0 : 16;
+const WIDTH = 668 + 2 * PAD;
+const MIN_HEIGHT = (GLASS ? 60 : 62) + 2 * PAD; // just the input bar (plus its hairline when there is no glass)
+const MAX_HEIGHT = 700;
 const HOTKEYS = [process.env.HOTKEY, 'Control+Shift+Space', 'Control+Alt+Space', 'Control+Alt+J'].filter(Boolean) as string[];
 const SMOKE = process.env.SMOKE === '1';
 const DEMO = process.env.DEMO === '1';
@@ -60,9 +64,11 @@ function createWindow() {
     useContentSize: true,
     show: false,
     frame: false,
-    transparent: true, // the page draws its own rounded corners and shadow
-    hasShadow: false,
-    resizable: false,
+    // Glass: Windows draws the blur, corners and shadow. Otherwise the page draws its own corners and shadow.
+    transparent: !GLASS,
+    hasShadow: GLASS,
+    ...(GLASS ? { backgroundMaterial: 'acrylic' as const, backgroundColor: '#00000000', roundedCorners: true } : {}),
+    resizable: GLASS, // the native shadow and corners need a resizable frame; user resizing is blocked below
     maximizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -73,7 +79,8 @@ function createWindow() {
       sandbox: true,
     },
   });
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.on('will-resize', (e) => e.preventDefault()); // only the page decides the height
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query: { glass: GLASS ? '1' : '0' } });
   // Links (e.g. the created issue) open in the default browser; the app window never navigates.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
@@ -187,26 +194,69 @@ async function smokeTest() {
   out.pageTitle = await run('document.title');
 
   // Drive the real UI. Writes are impossible here: auto-create is forced off and nothing is confirmed.
+  // States that need a real write (a created ticket) are drawn from fixed messages, never sent to a tool.
   settings.autoCreate = false;
   win!.showInactive(); // a hidden window cannot be captured
+  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // Acrylic is composed by Windows, so it is missing from a page capture. Crop the real screen to the
+  // window (plus a margin for its shadow) instead; only that crop is saved, never the whole screen.
   const shot = async (name: string) => {
-    const img = await win!.webContents.capturePage();
-    fs.writeFileSync(path.join(dataDir, `smoke-${name}.png`), img.toPNG());
+    await wait(450); // let the window finish resizing and animating
+    let png: Buffer;
+    try {
+      const b = win!.getBounds();
+      const d = screen.getDisplayMatching(b);
+      const f = d.scaleFactor;
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: Math.round(d.size.width * f), height: Math.round(d.size.height * f) } });
+      const src = sources.find((s) => s.display_id === String(d.id)) ?? sources[0];
+      const full = src.thumbnail.getSize();
+      const m = PAD; // exactly the window: nothing of the desktop around it is kept
+      const x = Math.max(0, Math.round((b.x - d.bounds.x + m) * f));
+      const y = Math.max(0, Math.round((b.y - d.bounds.y + m) * f));
+      const w = Math.min(full.width - x, Math.round((b.width - 2 * m) * f));
+      const h = Math.min(full.height - y, Math.round((b.height - 2 * m) * f));
+      png = src.thumbnail.crop({ x, y, width: w, height: h }).toPNG();
+    } catch {
+      png = (await win!.webContents.capturePage()).toPNG();
+    }
+    fs.writeFileSync(path.join(dataDir, `smoke-${theme}-${name}.png`), png);
   };
-  await wait(600);
-  out.initial = { windowContent: win!.getContentSize(), shellHeight: await run(`document.getElementById('shell').getBoundingClientRect().height`) };
-  await shot('1-initial');
+  const submit = async (text: string) => {
+    await run(`(() => { const i = document.getElementById('input'); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+    await wait(300);
+    for (let i = 0; i < 80 && !(await run(`!document.getElementById('out').hidden && !shell.classList.contains('busy')`)); i++) await wait(500);
+  };
+  const sizes = async () => ({ window: win!.getContentSize(), shell: await run(`Math.round(document.getElementById('shell').getBoundingClientRect().height)`) });
 
-  await run(`(() => { const i = document.getElementById('input'); i.value = 'create a story in WEB for smoke test'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
-  for (let i = 0; i < 80 && !(await run(`!document.getElementById('out').hidden && !document.getElementById('dot').classList.contains('busy')`)); i++) await wait(500);
-  await wait(500);
-  out.afterRequest = {
-    windowContent: win!.getContentSize(),
-    shellHeight: await run(`document.getElementById('shell').getBoundingClientRect().height`),
-    shown: await run(`document.getElementById('out').innerText`),
-  };
-  await shot('2-expanded');
+  out.theme = theme;
+  await wait(600);
+  out.idle = await sizes();
+  await shot('1-idle');
+
+  await run('showSuggestions()');
+  await wait(900);
+  out.suggestions = await sizes();
+  await shot('2-suggestions');
+
+  await run('reset()');
+  await submit('create a bug in WEB for login crash');
+  out.question = { ...(await sizes()), shown: await run(`document.getElementById('out').innerText`) };
+  await shot('3-question');
+
+  await run('reset()');
+  await submit('create a story in WEB for docs page');
+  out.card = { ...(await sizes()), shown: await run(`document.getElementById('out').innerText`) };
+  await shot('4-card');
+
+  await run(`reset(); render({ type: 'card', canConfirm: true, unresolved: [], options: [], errors: [], card: { title: 'Create issue', connectionName: 'Atlassian Rovo (live)', rows: [{ field: 'project', title: 'Project', value: 'My Software Team', assumed: false }, { field: 'issuetype', title: 'Issue type', value: 'Task', assumed: false }, { field: 'summary', title: 'Summary', value: 'Update the onboarding checklist', assumed: false }, { field: 'priority', title: 'Priority', value: 'Medium', assumed: true }], warnings: ['This creates a real issue on https://example.atlassian.net.'] } })`);
+  await shot('5-live-card');
+
+  await run(`reset(); render({ type: 'result', ok: true, text: 'Created KAN-12', url: 'https://example.invalid/browse/KAN-12' })`);
+  await shot('6-done');
+
+  await run(`reset(); shell.classList.add('busy'); document.getElementById('input').value = 'login page crashes on safari';`);
+  await shot('7-working');
   console.log('SMOKE ' + JSON.stringify(out, null, 2));
 }
 
@@ -221,6 +271,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     if (SMOKE) settings.autoCreate = false;
+    if (process.env.SMOKE_THEME === 'light' || process.env.SMOKE_THEME === 'dark') nativeTheme.themeSource = process.env.SMOKE_THEME;
     core = await createApp(loadEnv(), { dataDir, autoCreate: () => settings.autoCreate });
     wireIpc();
     createWindow();
