@@ -1,3 +1,4 @@
+import { type Advice, advise, type AdvisorContext, toUnderstanding, type Turn } from './advisor.js';
 import type { Connection } from './connectors/contract.js';
 import { type AuditLog, buildPlan, executePlan, type Plan } from './executor.js';
 import type { LlmGateway } from './llm.js';
@@ -17,6 +18,7 @@ export type UiToCore =
 
 export type CoreToUi =
   | { type: 'info'; text: string }
+  | { type: 'assistant'; text: string; reasoning?: string; suggestions?: string[] }
   | { type: 'question'; question: Question }
   | { type: 'draft'; connection: string; rows: { field: string; value: string; assumed: boolean }[] }
   | { type: 'card'; card: ConfirmationCard; canConfirm: boolean; unresolved: string[]; options: string[]; errors: string[] }
@@ -35,6 +37,8 @@ export interface SessionDeps {
   profile?: Profile;
   prefs?: Fields;
   llm?: LlmGateway;
+  /** Let the LLM reason about each request (answer, ask, or propose a ticket). On by default when an LLM is set. */
+  advisor?: boolean;
   /**
    * When true, a draft that is complete and valid is created straight away, without the confirm
    * click. Questions for missing values are still asked. Read on every request so it can be toggled.
@@ -46,8 +50,43 @@ export interface SessionDeps {
 export class Session {
   private state: State = { kind: 'idle' };
   readonly drafts: { connection: string; fields: Fields }[] = [];
+  /** The conversation so far, so a follow-up like "make it high priority" has something to refer to. */
+  private history: Turn[] = [];
+  private projects?: { at: number; list: string[] };
 
   constructor(private deps: SessionDeps) {}
+
+  /** What the reasoning step may know: the connected tools, their real projects, and recent tickets. */
+  private async context(): Promise<AdvisorContext> {
+    const now = Date.now();
+    if (!this.projects || now - this.projects.at > 5 * 60_000) {
+      const list: string[] = [];
+      for (const c of this.deps.connections) {
+        try {
+          for (const p of (await c.connector.lookup('project', '')).slice(0, 12)) list.push(`${p.id}: ${p.label}`);
+        } catch {
+          /* an unhealthy connection simply contributes nothing */
+        }
+      }
+      this.projects = { at: now, list: [...new Set(list)] };
+    }
+    const recent = this.deps.audit
+      .list(5)
+      .filter((a) => a.result.ok)
+      .map((a) => `${(a.result as { id: string }).id} ${a.step.params.summary ?? ''}`.trim());
+    return { today: new Date().toISOString().slice(0, 10), connections: this.deps.connections.map((c) => c.name), projects: this.projects.list, recent };
+  }
+
+  /** Ask the reasoning layer. Returns undefined when there is no LLM or it fails, so the plain flow takes over. */
+  private async consult(text: string): Promise<Advice | undefined> {
+    if (!this.deps.llm || this.deps.advisor === false) return undefined;
+    const advice = await advise(this.history, text, await this.context(), this.deps.llm);
+    if (advice) {
+      this.history.push({ role: 'user', text }, { role: 'assistant', text: advice.reply });
+      this.history = this.history.slice(-10);
+    }
+    return advice;
+  }
 
   async handle(msg: UiToCore): Promise<CoreToUi[]> {
     try {
@@ -72,29 +111,44 @@ export class Session {
   }
 
   private async submit(text: string): Promise<CoreToUi[]> {
+    const advice = await this.consult(text);
+    if (advice) {
+      const said: CoreToUi = { type: 'assistant', text: advice.reply, reasoning: advice.reasoning, suggestions: advice.suggestions };
+      if (advice.intent !== 'ticket' || !advice.ticket) {
+        this.state = { kind: 'idle' };
+        return [said];
+      }
+      // A proposed ticket goes through the same checks as any request: routing, lookups, the questionnaire.
+      const understanding = toUnderstanding(advice.ticket, text);
+      const routed = route(text, this.deps.connections);
+      if ('ask' in routed) return [said, ...this.askWhichTool(text, understanding, routed.ask)];
+      return [said, ...(await this.startFlow(text, routed.connection, understanding))];
+    }
     const understanding = await understand(text, this.deps.llm);
     if (understanding.operation === 'read') {
       return [{ type: 'info', text: 'Reads are not part of this demo. Try "create a bug for ...".' }];
     }
     const routed = route(text, this.deps.connections);
-    if ('ask' in routed) {
-      this.state = { kind: 'tool', request: text, understanding, candidates: routed.ask };
-      return [
-        {
-          type: 'question',
-          question: {
-            id: 'tool',
-            source: 1,
-            blocking: true,
-            field: '__tool',
-            text: 'Which tool should this go to?',
-            choices: routed.ask,
-            allowFreeText: true,
-          },
-        },
-      ];
-    }
+    if ('ask' in routed) return this.askWhichTool(text, understanding, routed.ask);
     return this.startFlow(text, routed.connection, understanding);
+  }
+
+  private askWhichTool(request: string, understanding: Understanding, candidates: Candidate[]): CoreToUi[] {
+    this.state = { kind: 'tool', request, understanding, candidates };
+    return [
+      {
+        type: 'question',
+        question: {
+          id: 'tool',
+          source: 1,
+          blocking: true,
+          field: '__tool',
+          text: 'Which tool should this go to?',
+          choices: candidates,
+          allowFreeText: true,
+        },
+      },
+    ];
   }
 
   private async startFlow(request: string, conn: Connection, understanding: Understanding): Promise<CoreToUi[]> {

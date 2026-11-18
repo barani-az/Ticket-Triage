@@ -1,6 +1,15 @@
 /** The LLM proposes. Everything it returns is checked against the tool's own data afterwards. */
+export interface LlmCall {
+  system: string;
+  user: string;
+  /** Ask a reasoning model to think harder. Sent as `reasoning_effort`; omit for plain extraction. */
+  effort?: 'low' | 'medium' | 'high';
+  /** Overrides the gateway's default timeout for this call (thinking takes longer than extraction). */
+  timeoutMs?: number;
+}
+
 export interface LlmGateway {
-  extractJson(opts: { system: string; user: string }): Promise<unknown>;
+  extractJson(opts: LlmCall): Promise<unknown>;
 }
 
 export interface OpenAiCompatConfig {
@@ -16,10 +25,10 @@ export interface OpenAiCompatConfig {
 export class OpenAiCompatGateway implements LlmGateway {
   constructor(private cfg: OpenAiCompatConfig) {}
 
-  async extractJson({ system, user }: { system: string; user: string }): Promise<unknown> {
+  async extractJson({ system, user, effort, timeoutMs }: LlmCall): Promise<unknown> {
     const res = await (this.cfg.fetchFn ?? fetch)(`${this.cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
-      signal: AbortSignal.timeout(this.cfg.timeoutMs ?? 20_000),
+      signal: AbortSignal.timeout(timeoutMs ?? this.cfg.timeoutMs ?? 20_000),
       headers: {
         'content-type': 'application/json',
         ...(this.cfg.apiKey ? { authorization: `Bearer ${this.cfg.apiKey}` } : {}),
@@ -27,6 +36,7 @@ export class OpenAiCompatGateway implements LlmGateway {
       body: JSON.stringify({
         model: this.cfg.model,
         temperature: 0,
+        ...(effort ? { reasoning_effort: effort } : {}),
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: system },
@@ -56,7 +66,7 @@ const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-
 /** Try each gateway in order; a timeout, overload or missing model moves on to the next. */
 export class FallbackGateway implements LlmGateway {
   constructor(private gateways: LlmGateway[]) {}
-  async extractJson(opts: { system: string; user: string }): Promise<unknown> {
+  async extractJson(opts: LlmCall): Promise<unknown> {
     let last: unknown;
     for (const g of this.gateways) {
       try {

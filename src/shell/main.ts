@@ -93,10 +93,21 @@ function createWindow() {
   return win;
 }
 
-function showWindow() {
+// How tall the window may grow: down to a small margin above the bottom of the work area (the taskbar).
+let availableHeight = MAX_HEIGHT;
+
+function placeWindow() {
   if (!win) return;
   const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  win.setPosition(workArea.x + Math.round((workArea.width - WIDTH) / 2), workArea.y + Math.round(workArea.height * 0.12));
+  const y = workArea.y + Math.round(workArea.height * 0.12);
+  win.setPosition(workArea.x + Math.round((workArea.width - WIDTH) / 2), y);
+  availableHeight = Math.max(MIN_HEIGHT, workArea.y + workArea.height - y - 12);
+  win.webContents.send('assistant:avail', Math.min(MAX_HEIGHT, availableHeight));
+}
+
+function showWindow() {
+  if (!win) return;
+  placeWindow();
   win.show();
   win.focus();
   win.webContents.send('assistant:focus');
@@ -175,8 +186,7 @@ function wireIpc() {
   // The page reports how tall it is; the window grows or shrinks to match, anchored at the top.
   ipcMain.on('assistant:resize', (_e, height: unknown) => {
     if (!win || DEMO || typeof height !== 'number' || !Number.isFinite(height)) return;
-    const { workArea } = screen.getDisplayMatching(win.getBounds());
-    const max = Math.min(MAX_HEIGHT, workArea.height - 40);
+    const max = Math.min(MAX_HEIGHT, availableHeight);
     win.setContentSize(WIDTH, Math.round(Math.max(MIN_HEIGHT, Math.min(height, max))));
   });
 }
@@ -196,6 +206,7 @@ async function smokeTest() {
   // Drive the real UI. Writes are impossible here: auto-create is forced off and nothing is confirmed.
   // States that need a real write (a created ticket) are drawn from fixed messages, never sent to a tool.
   settings.autoCreate = false;
+  placeWindow(); // where it opens for real, so the screen-fit logic is exercised too
   win!.showInactive(); // a hidden window cannot be captured
   const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -257,6 +268,9 @@ async function smokeTest() {
 
   await run(`reset(); shell.classList.add('busy'); document.getElementById('input').value = 'login page crashes on safari';`);
   await shot('7-working');
+
+  await run(`reset(); shell.classList.remove('busy'); document.getElementById('input').value = ''; render({ type: 'assistant', text: 'I drafted a bug ticket for the Safari login crashes, set to High priority because customers are affected. The draft is below.', reasoning: 'Customers are blocked from logging in, which makes it a high-priority bug.', suggestions: ['Add Safari version details', 'Assign to the frontend team'] })`);
+  await shot('8-assistant');
   console.log('SMOKE ' + JSON.stringify(out, null, 2));
 }
 

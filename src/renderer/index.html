@@ -16,7 +16,7 @@
    */
   :root {
     color-scheme: light dark;
-    --serif: "Newsreader", Georgia, Cambria, "Times New Roman", serif;
+    --display: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
     --mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
     --ink: #1b1a17;  --ink-2: #4f4b42;  --ink-3: #6b675d;
@@ -53,9 +53,12 @@
   html.glass #shell { max-width: none; margin: 0; border-radius: 0; border: 0; box-shadow: none; }
 
   #bar { -webkit-app-region: drag; display: flex; align-items: center; gap: 14px; height: 60px; padding: 0 12px 0 20px; }
-  .prompt { font: 600 20px/1 var(--mono); color: var(--accent); flex: none; }
-  #input { -webkit-app-region: no-drag; flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: 400 21px/28px var(--serif); caret-color: var(--accent); }
-  #input::placeholder { color: var(--ink-3); font-style: italic; }
+  .prompt { font: 600 19px/1 var(--mono); color: var(--accent); flex: none; }
+  /* The prompt blinks while a request is running, like a terminal waiting on a command. */
+  #shell.busy .prompt { animation: blink 1s steps(1, end) infinite; }
+  @keyframes blink { 50% { opacity: .15; } }
+  #input { -webkit-app-region: no-drag; flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: 400 18px/24px var(--display); caret-color: var(--accent); caret-shape: block; }
+  #input::placeholder { color: var(--ink-3); }
   .kbd { display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; padding: 0 6px; font: 500 11px/1 var(--mono); color: var(--ink-2); border: 1px solid var(--rule-2); border-radius: 3px; flex: none; }
   #toggle { -webkit-app-region: no-drag; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--ink-2); cursor: pointer; }
   #toggle:hover { background: var(--sel); }
@@ -69,20 +72,29 @@
   #shell.busy #prog { opacity: 1; }
   @keyframes slide { from { left: -26%; } to { left: 100%; } }
 
-  #out { border-top: 1px solid var(--rule); padding: 14px 20px 16px; display: flex; flex-direction: column; gap: 14px; max-height: 470px; overflow-y: auto; }
-  /* Fixed on purpose: tying this to the window height would stop the window from ever growing,
-     because the window height follows the content height. */
+  #out { border-top: 1px solid var(--rule); padding: 14px 20px 16px; display: flex; flex-direction: column; gap: 14px; max-height: min(470px, var(--out-max, 470px)); overflow-y: auto; }
+  /* --out-max comes from the main process (how much screen is left below the window), never from the
+     window's own height: that would shrink the window as its content shrinks, in a loop. */
   #out[hidden], #foot[hidden] { display: none; }
   #out::-webkit-scrollbar { width: 10px; }
   #out::-webkit-scrollbar-thumb { background: var(--rule-2); border-radius: 10px; border: 3px solid transparent; background-clip: content-box; }
 
-  .label { font: 500 11px/16px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 4px; }
-  .echo { font: italic 400 16px/24px var(--serif); color: var(--ink-2); }
+  .label { font: 500 11px/16px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 4px 8px; }
+  .echo { display: flex; align-items: baseline; gap: 10px; font: 400 14px/20px var(--sans); color: var(--ink-2); }
+  .echo::before { content: ">"; font: 600 13px/1 var(--mono); color: var(--accent); flex: none; }
   .meta { font-size: 13px; line-height: 18px; color: var(--ink-3); }
   .draft { font: 400 11.5px/18px var(--mono); color: var(--ink-2); }
   .draft b { font-weight: 400; color: var(--ink-3); }
   .draft span + span::before { content: '/'; margin: 0 9px; color: var(--ink-3); }
-  .q-text { font: 600 19px/26px var(--serif); margin: 0 0 4px; }
+  .q-text { font: 600 16px/22px var(--sans); margin: 0 0 4px 8px; }
+
+  /* The assistant's own words: help, analysis, and why it chose what it chose. */
+  .assist { display: flex; flex-direction: column; gap: 10px; }
+  .say { font: 400 15px/22px var(--sans); }
+  .why { display: flex; align-items: baseline; gap: 10px; font-size: 13px; line-height: 19px; color: var(--ink-2); }
+  .why .stamp { font: 600 10.5px/14px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); border: 1px solid var(--rule-2); border-radius: 2px; padding: 0 6px; flex: none; }
+  .sug { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sug .btn { height: 30px; padding: 0 12px; font-weight: 500; }
 
   /* Ledger rows: dotted rules, a mono key, a serif title. */
   .opts { display: flex; flex-direction: column; }
@@ -93,17 +105,17 @@
   .opt.sel .t { font-weight: 500; }
   .opt .n { font: 600 12px/1 var(--mono); width: 56px; flex: none; color: var(--ink-2); }
   .opt.sel .n { color: var(--accent); }
-  .opt .t { flex: 1; min-width: 0; font: 400 17px/24px var(--serif); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opt .t { flex: 1; min-width: 0; font: 400 15px/22px var(--sans); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .opt .d { font-size: 12px; color: var(--ink-3); flex: none; }
 
   /* The ticket slip. */
   .slip { border-top: 3px double var(--ink); padding-top: 12px; }
-  .slip h4 { margin: 0 0 6px; font: 600 20px/26px var(--serif); }
+  .slip h4 { margin: 0 0 6px; font: 600 16px/22px var(--sans); }
   .props { margin: 0; }
   .props .r { display: flex; align-items: baseline; gap: 14px; padding: 7px 0; border-bottom: 1px dotted var(--rule-2); }
   .props .r:last-child { border-bottom: 0; }
-  .props dt { width: 104px; flex: none; font: 500 11px/18px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
-  .props dd { margin: 0; flex: 1; font: 400 17px/24px var(--serif); overflow-wrap: anywhere; }
+  .props dt { width: 104px; flex: none; font: 400 12px/22px var(--mono); text-transform: lowercase; color: var(--ink-3); }
+  .props dd { margin: 0; flex: 1; font: 400 15px/22px var(--sans); overflow-wrap: anywhere; }
   .tag { margin-left: 10px; font: 600 10.5px/14px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--warn); border: 1px solid currentColor; border-radius: 2px; padding: 0 6px; }
 
   /* Notes: a labelled box, like a margin note on a printed slip. */
@@ -122,7 +134,7 @@
 
   .done { border-top: 3px double var(--ink); padding-top: 12px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; }
   .done .stamp { font: 600 10.5px/14px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--done); border: 1px solid currentColor; border-radius: 2px; padding: 1px 6px; }
-  .done .k { font: 600 17px/24px var(--mono); }
+  .done .k { font: 600 15px/22px var(--mono); }
   .done a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--accent); }
 
   #foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; white-space: nowrap; height: 34px; padding: 0 20px; border-top: 1px solid var(--rule); background: var(--foot); color: var(--ink-2); font: 400 11px/1 var(--mono); }
@@ -227,8 +239,24 @@ async function send(msg) {
 // A labelled margin note: kind is ok, warn or bad.
 function note(kind, stamp, text) { return add(el('div', { class: 'note ' + kind }, el('span', { class: 'stamp', text: stamp }), el('span', { text }))); }
 
+// Start a new turn with a given sentence, as if it had been typed (used by the suggestion buttons).
+function follow(text) {
+  if (busy) return;
+  reset();
+  add(el('div', { class: 'echo', text }));
+  send({ type: 'submit', text });
+}
+
+function renderAssistant(m) {
+  const box = el('div', { class: 'assist' }, el('div', { class: 'say', text: m.text }));
+  if (m.reasoning) box.append(el('div', { class: 'why' }, el('span', { class: 'stamp', text: 'Why' }), el('span', { text: m.reasoning })));
+  if (m.suggestions && m.suggestions.length) box.append(el('div', { class: 'sug' }, ...m.suggestions.map(s => el('button', { class: 'btn', type: 'button', text: s, onclick: () => follow(s) }))));
+  add(box);
+}
+
 function render(m) {
-  if (m.type === 'info') add(el('div', { class: 'meta', text: m.text }));
+  if (m.type === 'assistant') renderAssistant(m);
+  else if (m.type === 'info') add(el('div', { class: 'meta', text: m.text }));
   else if (m.type === 'error') note('bad', 'Error', m.message);
   else if (m.type === 'draft') renderDraft(m);
   else if (m.type === 'question') renderQuestion(m.question);
@@ -239,7 +267,9 @@ function render(m) {
 function renderDraft(m) {
   if (draftEl) draftEl.remove();
   if (!m.rows.length) { draftEl = null; return; }
-  draftEl = el('div', { class: 'draft' }, ...m.rows.map(r => el('span', {}, el('b', { text: label(r.field).toLowerCase() + ' ' }), r.value + (r.assumed ? ' (assumed)' : ''))));
+  // A short summary line: long fields (a description) are left for the slip, and the rest are trimmed.
+  const short = v => { const one = v.replace(/\s+/g, ' ').trim(); return one.length > 44 ? one.slice(0, 43) + '…' : one; };
+  draftEl = el('div', { class: 'draft' }, ...m.rows.filter(r => r.field !== 'description').map(r => el('span', {}, el('b', { text: label(r.field).toLowerCase() + ' ' }), short(r.value) + (r.assumed ? ' (assumed)' : ''))));
   show();
   out.insertBefore(draftEl, questionEl && questionEl.isConnected ? questionEl : null);
 }
@@ -380,6 +410,8 @@ function enter() {
 // The desktop window follows the content: tell the main process how tall the palette is.
 if (bridge) new ResizeObserver(() => bridge.resize(Math.ceil(shell.getBoundingClientRect().height) + 2 * PAD)).observe(shell);
 if (bridge) bridge.onFocus(() => { enter(); input.focus(); input.select(); loadStatus(); });
+// Room left on screen below the window: the results list scrolls inside it instead of running off the screen.
+if (bridge && bridge.onAvail) bridge.onAvail(h => document.documentElement.style.setProperty('--out-max', Math.max(160, h - (GLASS ? 60 : 62) - 36 - 2 * PAD) + 'px'));
 loadStatus(); hint(); input.focus();
 </script>
 </body>

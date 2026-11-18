@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('api', {
   hide: () => ipcRenderer.send('assistant:hide'),
   resize: (height: number) => ipcRenderer.send('assistant:resize', height),
   onFocus: (cb: () => void) => ipcRenderer.on('assistant:focus', () => cb()),
+  onAvail: (cb: (height: number) => void) => ipcRenderer.on('assistant:avail', (_e, h: number) => cb(h)),
 });
