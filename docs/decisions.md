@@ -114,3 +114,37 @@ Things to know before buying:
 - **Hardware for the key.** Since June 2023, the key for a CA-issued certificate must live on hardware: either a USB token or the CA's cloud signing service. Plan which one the build machine will use.
 - **SmartScreen.** Microsoft's guidance treats OV certificates and Artifact Signing the same way, so there is no need to pay extra for EV. With either one, SmartScreen builds reputation as the app gets downloaded.
 - **What the buyer needs:** the company's legal name and registered address, and a contact who can answer the verification call or email.
+
+### Microsoft Entra ID app registration
+
+**Status:** the request is written but has not been filed with IT.
+**Owner:** _(to be named)_
+**Filed on:** _(not yet)_
+
+**Why it is needed:** roadmap phase 2 (Teams, Outlook, To Do and OneDrive) signs users in through Microsoft Entra ID. Before anyone can connect Microsoft 365, IT has to register the app and approve it once.
+
+**What to ask IT for:**
+- **Name:** Ticket Triage (desktop)
+- **Supported account types:** this organisation only (single tenant)
+- **Platform:** Mobile and desktop applications, with two redirect URIs:
+  - `http://localhost`, for sign-in through the system browser
+  - `ms-appx-web://Microsoft.AAD.BrokerPlugin/<client-id>`, for the Windows sign-in broker. Add this one after the app is created, because it needs the client ID.
+- **Allow public client flows:** Yes. The app ships no client secret.
+- **Permissions:** delegated permissions only, so the app always acts as the signed-in user. No application permissions.
+- **Admin consent:** granted for the whole organisation, so users are not prompted one by one.
+
+| Delegated Microsoft Graph permission | Used for |
+|---|---|
+| `openid`, `profile`, `offline_access`, `User.Read` | Signing in and staying signed in |
+| `User.ReadBasic.All` | Matching people across tools by work email |
+| `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Send` | Posting to a Teams channel |
+| `ChatMessage.Send` | Sending a Teams chat message |
+| `Mail.Send` | Sending an email |
+| `Calendars.ReadWrite` | Creating a meeting invite |
+| `Tasks.ReadWrite` | Creating a To Do task |
+| `Files.ReadWrite` | Sharing a OneDrive file with an organisation-scoped or person-scoped link |
+
+**What to tell IT about the app:**
+- It acts only as the signed-in user.
+- Every message, email and invite is shown with its exact recipients and full text, and the user confirms it before it is sent.
+- Tokens stay on the machine, in MSAL's token cache, which Windows encrypts.
