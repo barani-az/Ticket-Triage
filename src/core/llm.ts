@@ -54,14 +54,14 @@ export class OpenAiCompatGateway implements LlmGateway {
   }
 }
 
-const GEMINI_OPENAI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
+export const GEMINI_OPENAI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
 
 /**
  * Measured on 2026-10-27 with a one-word request: 3.5-flash-lite 1.3s, 2.5-flash 1.7s, 3.5-flash 3.3s,
  * while 3.8-flash hung past 45s and a few others returned 503 "high demand". Models come and go,
  * so the list is tried in order and GEMINI_MODEL, if set, goes first.
  */
-const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'];
+export const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'];
 
 /** Try each gateway in order; a timeout, overload or missing model moves on to the next. */
 export class FallbackGateway implements LlmGateway {

@@ -11,6 +11,7 @@ These are the answers that Task 0 of the MVP plan asks for (`docs/superpowers/pl
 | 3 | What data may leave the machine | Proposed |
 | 4 | Deletes and bulk edits are blocked | Decided |
 | 5 | Jira Cloud sign-in: Rovo's OAuth (no secret), not classic 3LO | Decided |
+| 6 | Production model: gemini-3.5-flash-lite, with two fallbacks | Decided |
 
 ## 1. Team language: Electron and TypeScript (Option A)
 
@@ -113,6 +114,35 @@ This is proven in this repo: `src/mcp/remote.ts` registers with `token_endpoint_
 - **Scopes:** today the client metadata sends no `scope`, so the sign-in granted every scope. Still to test: whether Atlassian honours a narrower `scope` at registration. This is in roadmap phase 1.
 - **Classic 3LO** would come back only if a hosted broker becomes acceptable. That is not planned.
 - **Data Center** has its own OAuth 2.0 provider with PKCE. The MVP does not need it, because a Personal Access Token works.
+
+## 6. Production model: gemini-3.5-flash-lite, with two fallbacks
+
+**Decided** for the current provider. If decision 2 changes, this decision is revisited.
+
+**The test:**
+- `scripts/evalModels.ts` sends 30 fixed requests through the real reasoning step, once per model.
+- The 30 requests are made up but realistic: 14 tickets, 9 questions and 7 vague requests that should get a clarifying question.
+- For each model it scores intent, issue type and priority against the advisor's own rubric, and measures latency.
+- Run on 2026-11-25:
+
+| Model | Intent | Issue type | Priority | No answer | Median | p90 |
+|---|---|---|---|---|---|---|
+| gemini-3.5-flash-lite | 30/30 | 13/13 | 11/11 | 0 | 2.0s | 5.5s |
+| gemini-3.5-flash | 14/30 | 9/13 | 7/11 | 16 | 4.0s | 38.6s |
+| gemini-2.5-flash | 23/30 | 12/13 | 10/11 | 7 | 1.7s | 3.5s |
+
+**What "No answer" means:** a second run of the two flash models got HTTP 429 (quota exceeded) on every call. So the gaps come from the key's per-model quota running out, not from wrong answers. On the requests they did answer:
+- gemini-3.5-flash was right every time.
+- gemini-2.5-flash missed once: it rated "invoices are being emailed to the wrong customers" as High instead of Highest.
+
+**The choice:**
+- Keep gemini-3.5-flash-lite first. It is fully correct, fast, and on this key it was the only model that never ran out of quota. It is already the default in `src/core/llm.ts`.
+- Keep gemini-3.5-flash and gemini-2.5-flash as fallbacks. Their answers were correct, but 3.5-flash is slow at p90.
+
+**Limits:**
+- These are 30 made-up requests, not real ones.
+- The free-tier quota alone rules out real use (decision 2).
+- Re-run `npx tsx scripts/evalModels.ts` on about 30 real, anonymised requests once a paid tier is approved, and again whenever the model or the prompt changes.
 
 ## Long-lead items
 
