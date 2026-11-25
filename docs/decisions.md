@@ -83,3 +83,34 @@ Any connection can also be made read-only (for example `ROVO_READONLY=1`), which
 Two follow-ups keep this true:
 - **Rovo scopes:** the Rovo sign-in currently grants every Atlassian scope, including delete. It should request only read, write and search (roadmap phase 1).
 - **Generic MCP connector:** it writes with the first tool that is not marked read-only. On a third-party server, that tool could be a delete. Before custom MCP connections ship, pin each one to a named create tool (`toolName`).
+
+## Long-lead items
+
+These items take weeks and need someone with a budget or admin rights.
+The requests below are ready to send.
+Fill in the owner and the date when each one goes out.
+
+### Code-signing certificate
+
+**Status:** the request is written but has not been placed.
+**Owner:** _(to be named)_
+**Requested on:** _(not yet)_
+
+**Why it is needed:**
+- Windows SmartScreen warns users about unsigned installers.
+- Intune deploys a signed MSI.
+- Roadmap phase 3 (installer and auto-update) depends on it. electron-builder signs the app during the build.
+
+**Why start now:** Microsoft or the certificate authority (CA) checks the company's legal identity first, and that can take days to weeks.
+
+| Option | Cost (check before buying) | Use it when |
+|---|---|---|
+| Azure Artifact Signing (formerly Trusted Signing) | About $9.99 a month for up to 5,000 signatures, on a paid Azure subscription | The company is in a supported country. At the last check: the US, Canada, the EU and the UK. |
+| OV code-signing certificate from a CA (DigiCert, Sectigo, SSL.com) | A yearly fee | Artifact Signing is not available to the company |
+
+**Recommendation:** use Artifact Signing if the company qualifies, otherwise an OV certificate.
+
+Things to know before buying:
+- **Hardware for the key.** Since June 2023, the key for a CA-issued certificate must live on hardware: either a USB token or the CA's cloud signing service. Plan which one the build machine will use.
+- **SmartScreen.** Microsoft's guidance treats OV certificates and Artifact Signing the same way, so there is no need to pay extra for EV. With either one, SmartScreen builds reputation as the app gets downloaded.
+- **What the buyer needs:** the company's legal name and registered address, and a contact who can answer the verification call or email.
