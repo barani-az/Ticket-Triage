@@ -10,6 +10,7 @@ These are the answers that Task 0 of the MVP plan asks for (`docs/superpowers/pl
 | 2 | LLM provider: Gemini on a paid tier, behind the gateway | Proposed |
 | 3 | What data may leave the machine | Proposed |
 | 4 | Deletes and bulk edits are blocked | Decided |
+| 5 | Jira Cloud sign-in: Rovo's OAuth (no secret), not classic 3LO | Decided |
 
 ## 1. Team language: Electron and TypeScript (Option A)
 
@@ -83,6 +84,35 @@ Any connection can also be made read-only (for example `ROVO_READONLY=1`), which
 Two follow-ups keep this true:
 - **Rovo scopes:** the Rovo sign-in currently grants every Atlassian scope, including delete. It should request only read, write and search (roadmap phase 1).
 - **Generic MCP connector:** it writes with the first tool that is not marked read-only. On a third-party server, that tool could be a delete. Before custom MCP connections ship, pin each one to a named create tool (`toolName`).
+
+## 5. Jira Cloud sign-in: Rovo's OAuth, not classic 3LO
+
+**Decided.**
+The spike asked whether Jira Cloud OAuth can work in a desktop app without shipping a client secret.
+
+**The answer:**
+- **Classic 3LO: no.** It cannot work without a secret.
+- **Atlassian's Rovo MCP server: yes.** It already works in this repo.
+
+**Classic OAuth 2.0 (3LO) apps**, registered in the developer console:
+- The token exchange takes a `client_secret`.
+- According to developer-community reports and Atlassian's open feature request ECO-283, Atlassian does not accept public clients. PKCE is accepted only alongside the secret, not as a replacement for it.
+- There is no device flow either.
+
+So a desktop app would have to do one of two things:
+- Ship the secret, which anyone could pull out of the installer.
+- Run a hosted broker that holds the secret and exchanges the codes.
+
+**The Rovo MCP server** (`mcp.atlassian.com`) uses OAuth 2.1 with dynamic client registration and PKCE.
+Each install registers its own client at its first sign-in, so nothing secret ships with the app.
+This is proven in this repo: `src/mcp/remote.ts` registers with `token_endpoint_auth_method: 'none'`, signs in through the system browser and a loopback redirect, and created and read back KAN-4 on a live site.
+
+**What follows from this:**
+- **Jira Cloud** connects through Rovo by default. The direct REST connector stays for Data Center (Personal Access Token) and as a fallback for Cloud, with an API token.
+- **Site admin:** the site admin may need to allow Rovo MCP access.
+- **Scopes:** today the client metadata sends no `scope`, so the sign-in granted every scope. Still to test: whether Atlassian honours a narrower `scope` at registration. This is in roadmap phase 1.
+- **Classic 3LO** would come back only if a hosted broker becomes acceptable. That is not planned.
+- **Data Center** has its own OAuth 2.0 provider with PKCE. The MVP does not need it, because a Personal Access Token works.
 
 ## Long-lead items
 
