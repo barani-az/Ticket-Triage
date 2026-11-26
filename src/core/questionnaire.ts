@@ -52,6 +52,15 @@ export class Questionnaire {
     return !prop.enum && !prop['x-lookup'];
   }
 
+  /** A free-text value that breaks the field's pattern (e.g. a date as YYYY-MM-DD) is asked again. */
+  private fits(prop: JsonSchema, text: string) {
+    return !prop.pattern || new RegExp(prop.pattern).test(text);
+  }
+
+  private badFormat(key: string, prop: JsonSchema, text: string) {
+    return this.make(key, prop, 5, `'${text}' isn't in the right format. ${prop['x-question'] ?? ''}`.trim());
+  }
+
   private async candidates(prop: JsonSchema, text: string): Promise<Candidate[]> {
     if (prop.enum) return (prop.enum as unknown[]).map((v) => ({ id: String(v), label: String(v) }));
     if (prop['x-lookup']) return this.conn.connector.lookup(prop['x-lookup'], text, this.ctx());
@@ -72,7 +81,7 @@ export class Questionnaire {
       source,
       blocking: true,
       field: key,
-      text: text ?? (this.isFree(prop) ? `What should the ${title} be?` : `Which ${title}?`),
+      text: text ?? prop['x-question'] ?? (this.isFree(prop) ? `What should the ${title} be?` : `Which ${title}?`),
       choices: list,
       allowFreeText: true,
     };
@@ -118,6 +127,10 @@ export class Questionnaire {
 
   private async applyHint(key: string, prop: JsonSchema, hint: HintedField): Promise<Question | undefined> {
     if (this.isFree(prop)) {
+      if (!this.fits(prop, hint.value)) {
+        this.pending = await this.badFormat(key, prop, hint.value);
+        return this.pending.q;
+      }
       this.fields[key] = { id: hint.value, label: hint.value };
       return;
     }
@@ -149,9 +162,11 @@ export class Questionnaire {
     if (chosen) return this.set(key, chosen);
 
     const text = (input.text ?? '').trim();
-    if (text && this.isFree(prop)) return this.set(key, { id: text, label: text });
+    if (text && this.isFree(prop) && this.fits(prop, text)) return this.set(key, { id: text, label: text });
 
-    if (text) {
+    if (text && this.isFree(prop)) {
+      if (this.attempts[key] < MAX_ATTEMPTS) this.queued = await this.badFormat(key, prop, text);
+    } else if (text) {
       const m = matchAnswer(text, await this.candidates(prop, text));
       if (m.kind === 'one') return this.set(key, m.matches[0]);
       if (this.attempts[key] < MAX_ATTEMPTS) {

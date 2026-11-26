@@ -286,7 +286,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     if (SMOKE) settings.autoCreate = false;
     if (process.env.SMOKE_THEME === 'light' || process.env.SMOKE_THEME === 'dark') nativeTheme.themeSource = process.env.SMOKE_THEME;
-    core = await createApp(loadEnv(), { dataDir, autoCreate: () => settings.autoCreate });
+    core = await createApp(loadEnv(), { dataDir, root: app.getAppPath(), autoCreate: () => settings.autoCreate });
     wireIpc();
     createWindow();
 
@@ -296,6 +296,7 @@ if (!app.requestSingleInstanceLock()) {
     buildTray();
     console.log(`Hotkey: ${hotkeyLabel}  |  LLM: ${core.llmEnabled ? 'on' : 'built-in rules'}  |  Create without asking: ${settings.autoCreate}`);
     if (core.rovoError) console.log(`Rovo skipped: ${core.rovoError}`);
+    if (core.m365Error) console.log(`Microsoft 365 skipped: ${core.m365Error}`);
 
     if (SMOKE) {
       await smokeTest();

@@ -9,6 +9,7 @@ import { ROVO_URL, RovoJiraConnector } from '../core/connectors/rovo.js';
 import { AuditLog } from '../core/executor.js';
 import { gatewayFromEnv } from '../core/llm.js';
 import { Session } from '../core/session.js';
+import { connectMs365 } from '../mcp/ms365Server.js';
 import { connectRemoteMcp } from '../mcp/remote.js';
 import { startMockJira } from '../mock/jiraMock.js';
 
@@ -91,6 +92,15 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     }
   }
 
+  let m365Error: string | undefined;
+  if (env.M365 === '1') {
+    try {
+      connections.push(await connectMs365(opts.root ?? process.cwd(), env));
+    } catch (e) {
+      m365Error = (e as Error).message;
+    }
+  }
+
   const audit = new AuditLog(path.join(opts.dataDir, 'audit.jsonl'));
   const llm = gatewayFromEnv(env);
   const session = new Session({ connections, audit, llm, autoCreate: opts.autoCreate });
@@ -103,6 +113,7 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     audit,
     llmEnabled: Boolean(llm),
     rovoError,
+    m365Error,
     /** Sign in to Rovo (opens the browser) and add it as a connection. */
     async addRovo(log?: (l: string) => void) {
       if (connections.some((c) => c.id === 'rovo')) return;
@@ -146,6 +157,10 @@ async function examples(connections: Connection[]): Promise<string[]> {
     } catch {
       /* the connection is unhealthy; it shows in the status badges */
     }
+  }
+  if (connections.some((c) => c.connector.manifest.type === 'ms365')) {
+    out.splice(1, 0, 'make a ticket from the latest email about a bug');
+    out.push('email the team that the release moved to Friday');
   }
   if (!out.length) out.push('create a task for update the onboarding checklist');
   return out.slice(0, 3);
