@@ -57,7 +57,7 @@
   /* The prompt blinks while a request is running, like a terminal waiting on a command. */
   #shell.busy .prompt { animation: blink 1s steps(1, end) infinite; }
   @keyframes blink { 50% { opacity: .15; } }
-  #input { -webkit-app-region: no-drag; flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: 400 18px/24px var(--display); caret-color: var(--accent); caret-shape: block; }
+  #input { -webkit-app-region: no-drag; flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: 400 18px/24px var(--display); caret-color: var(--accent); }
   #input::placeholder { color: var(--ink-3); }
   .kbd { display: inline-flex; align-items: center; justify-content: center; height: 20px; min-width: 20px; padding: 0 6px; font: 500 11px/1 var(--mono); color: var(--ink-2); border: 1px solid var(--rule-2); border-radius: 3px; flex: none; }
   #toggle, #hist { -webkit-app-region: no-drag; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--ink-2); cursor: pointer; }
@@ -156,10 +156,63 @@
   #pills .warnnote { color: var(--warn); }
   #keys span { display: inline-flex; align-items: center; gap: 6px; }
   #keys .kbd { height: 18px; font-size: 10px; }
+
+  /* ---- Chat mode: header, bubbles, message box at the bottom ---- */
+  #head { display: none; }
+  #send { -webkit-app-region: no-drag; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: var(--ink); color: var(--on-ink); cursor: pointer; flex: none; }
+  #send[hidden] { display: none; }
+
+  #shell.chat { display: flex; flex-direction: column; height: min(580px, var(--chat-max, 580px)); }
+  #shell.chat #head { order: 0; -webkit-app-region: drag; display: flex; align-items: center; gap: 8px; height: 42px; flex: none; padding: 0 10px 0 16px; border-bottom: 1px solid var(--rule); }
+  #head .who { flex: 1; display: flex; align-items: center; gap: 8px; font: 600 13px/1 var(--sans); }
+  #head .mark { font: 600 14px/1 var(--mono); color: var(--accent); }
+  #head button { -webkit-app-region: no-drag; height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-2); font: 500 12px/1 var(--sans); cursor: pointer; }
+  #head button:hover { background: var(--sel); color: var(--ink); }
+  #shell.chat #out { order: 1; flex: 1; min-height: 0; max-height: none; border-top: 0; padding: 14px 16px 10px; gap: 10px; }
+  #shell.chat #out > :first-child { margin-top: auto; } /* a short conversation sits just above the message box */
+  #shell.chat #out > * { flex: none; }
+  #shell.chat #bar { order: 2; height: auto; flex: none; margin: 0 12px 10px; padding: 6px 6px 6px 16px; gap: 8px; border: 1px solid var(--rule-2); border-radius: 22px; background: var(--layer); }
+  #shell.chat #bar:focus-within { border-color: var(--accent); }
+  #shell.chat #bar .prompt, #shell.chat #kb, #shell.chat #toggle { display: none; }
+  #shell.chat #input { font-size: 15px; }
+  #shell.chat #prog { display: none; } /* the typing bubble shows work in progress */
+  #shell.chat #foot { order: 3; flex: none; }
+
+  /* Your messages on the right, the assistant's on the left. */
+  .echo { align-self: flex-end; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 78%; padding: 8px 13px; border-radius: 16px 16px 4px 16px; background: var(--ink); color: var(--on-ink); overflow-wrap: anywhere; }
+  .echo::before { content: none; }
+  .echo .thumb { width: 180px; height: 104px; }
+  .assist { align-self: flex-start; align-items: flex-start; max-width: 90%; gap: 6px; }
+  .say { padding: 9px 13px; border-radius: 16px 16px 16px 4px; background: var(--layer); border: 1px solid var(--rule); font: 400 14px/21px var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .why { padding-left: 4px; font-size: 12px; line-height: 17px; }
+  .sug { gap: 6px; }
+  .sug .btn { height: 28px; padding: 0 12px; border-radius: 14px; border-color: var(--rule-2); font: 500 12.5px/1 var(--sans); }
+  #shell.chat .meta { align-self: center; text-align: center; font-size: 11.5px; }
+  #shell.chat .draft { align-self: flex-start; padding-left: 4px; }
+  #shell.chat .question, #shell.chat .card, #shell.chat .note, #shell.chat .done, #shell.chat .preview { align-self: flex-start; width: 94%; }
+  #shell.chat .question, #shell.chat .card, #shell.chat .done { padding: 10px 12px; border: 1px solid var(--rule); border-radius: 16px 16px 16px 4px; background: var(--layer); }
+  #shell.chat .question .q-text { margin: 0 0 4px; font-size: 14px; }
+  #shell.chat .question .opt { padding: 7px 8px; }
+  #shell.chat .question .opt .n { width: 18px; }
+  #shell.chat .question .opt .t { font-size: 14px; }
+  #shell.chat .card .slip { border-top: 0; padding-top: 0; }
+  #shell.chat .card .slip h4 { font-size: 14px; }
+  #shell.chat .card .props dd { font-size: 14px; max-height: 66px; overflow-y: auto; white-space: pre-wrap; }
+
+  .typing { align-self: flex-start; display: flex; gap: 4px; padding: 12px 14px; border-radius: 16px 16px 16px 4px; background: var(--layer); border: 1px solid var(--rule); }
+  .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); animation: dot 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: .15s; }
+  .typing i:nth-child(3) { animation-delay: .3s; }
+  @keyframes dot { 0%, 60%, 100% { opacity: .3; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
 </style>
 </head>
 <body>
 <div id="shell">
+  <div id="head">
+    <span class="who"><span class="mark" aria-hidden="true">&gt;</span>Ticket assistant</span>
+    <button type="button" id="newchat" title="New chat (Ctrl+N)">New chat</button>
+    <button type="button" id="closebtn" aria-label="Hide" title="Hide (Esc)"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg></button>
+  </div>
   <div id="bar">
     <span class="prompt" aria-hidden="true">&gt;</span>
     <input id="input" type="text" autocomplete="off" spellcheck="false" placeholder="Describe a task or a problem" aria-label="Request">
@@ -168,6 +221,7 @@
       <button type="button" id="attx" aria-label="Remove the screenshot"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg></button>
     </span>
     <span class="kbd" id="kb">Esc</span>
+    <button type="button" id="send" aria-label="Send" title="Send (Enter)" hidden><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5"/></svg></button>
     <button id="hist" type="button" aria-label="History (Ctrl+H)" title="History (Ctrl+H)">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2.1 1.3"/></svg>
     </button>
@@ -187,6 +241,7 @@ const out = document.getElementById('out');
 const foot = document.getElementById('foot');
 const shell = document.getElementById('shell');
 const kb = document.getElementById('kb');
+const sendBtn = document.getElementById('send');
 const att = document.getElementById('att');
 const attimg = document.getElementById('attimg');
 const toggle = document.getElementById('toggle');
@@ -222,7 +277,7 @@ function el(tag, props = {}, ...kids) {
 }
 const kbd = t => el('span', { class: 'kbd', text: t });
 
-function show() { out.hidden = false; foot.hidden = false; }
+function show() { out.hidden = false; foot.hidden = false; if (!suggestOpen && !histOpen && !shell.classList.contains('chat')) { shell.classList.add('chat'); hint(); } }
 const CARD_PLACEHOLDER = 'Say "create it", or tell me what to change';
 let cardEl = null;
 let stashed = null;     // the conversation, parked while suggestions or history are on screen
@@ -230,7 +285,8 @@ let stashed = null;     // the conversation, parked while suggestions or history
 function reset() {
   out.replaceChildren(); out.hidden = true; foot.hidden = true;
   pending = null; questionEl = null; draftEl = null; cardEl = null; cardAct = null; opts = []; sel = -1; suggestOpen = false; histOpen = false; stashed = null;
-  toggle.setAttribute('aria-expanded', 'false'); input.placeholder = DEFAULT_PLACEHOLDER; hint();
+  shell.classList.remove('chat');
+  toggle.setAttribute('aria-expanded', 'false'); hint();
 }
 
 // Take the waiting question or card off the screen: the next reply brings back whatever still applies.
@@ -299,7 +355,14 @@ function echo(text, img) {
 
 // The footer always says what the keys do right now.
 function hint() {
-  kb.textContent = (input.value.trim() || images.length) ? 'Enter' : 'Esc';
+  const typed = Boolean(input.value.trim() || images.length);
+  const chat = shell.classList.contains('chat');
+  kb.textContent = typed ? 'Enter' : 'Esc';
+  sendBtn.hidden = !(chat && typed);
+  input.placeholder = images.length ? 'Add a note, or press Enter to send'
+    : cardAct ? CARD_PLACEHOLDER
+    : pending ? (pending.choices.length ? 'Choose an option or type an answer' : 'Type your answer')
+    : chat ? 'Type a message' : DEFAULT_PLACEHOLDER;
   const keys = pending ? [['↑↓', 'choose'], ['Enter', 'select'], ['Esc', 'close']]
     : cardAct ? [['Enter', 'create'], ['Esc', 'close']]
     : histOpen ? [['↑↓', 'move'], ['Enter', 'open'], ['Esc', 'close']]
@@ -310,11 +373,19 @@ function hint() {
 
 async function send(msg) {
   setBusy(true);
+  // Three bouncing dots, like any chat, while the assistant is working.
+  const typing = shell.classList.contains('chat') ? add(el('div', { class: 'typing', 'aria-label': 'The assistant is typing' }, el('i'), el('i'), el('i'))) : null;
+  // After a few seconds, say why it is slow, so it never looks frozen.
+  let slowNote = null;
+  const slow = typing ? setTimeout(() => { slowNote = add(el('div', { class: 'meta', text: 'Still working. The AI model is slow right now.' })); }, 6000) : 0;
+  const done = () => { clearTimeout(slow); if (slowNote) slowNote.remove(); if (typing) typing.remove(); };
   try {
     const msgs = await transport.send(msg);
+    done();
     if (!Array.isArray(msgs)) note('bad', 'Error', (msgs && msgs.error) || 'Something went wrong.');
     else for (const m of msgs) render(m);
   } catch (e) {
+    done();
     note('bad', 'Error', String(e && e.message || e));
   }
   setBusy(false);
@@ -444,7 +515,7 @@ function renderQuestion(q) {
     row.addEventListener('click', run);
     return { el: row, run };
   });
-  questionEl = el('div', {}, el('div', { class: 'q-text', text: q.text }), rows.length ? el('div', { class: 'opts' }, ...rows.map(r => r.el)) : null,
+  questionEl = el('div', { class: 'question' }, el('div', { class: 'q-text', text: q.text }), rows.length ? el('div', { class: 'opts' }, ...rows.map(r => r.el)) : null,
     q.field.startsWith('__') ? null : el('div', { class: 'actions', style: 'margin-top:8px' }, el('button', { class: 'btn quiet', type: 'button', text: 'Skip the remaining questions', onclick: () => { add(el('div', { class: 'echo', text: 'Skip the remaining questions' })); clearQuestion(); send({ type: 'stop' }); } })));
   add(questionEl);
   setOpts(rows);
@@ -458,7 +529,7 @@ function renderCard(m) {
   const btnText = m.card.button || (live ? 'Create real ticket' : 'Create ticket');
   const props = el('dl', { class: 'props' });
   for (const r of m.card.rows) props.append(el('div', { class: 'r' }, el('dt', { text: r.title }), el('dd', {}, r.value, r.assumed ? el('span', { class: 'tag', text: 'assumed' }) : null)));
-  const box = el('div', { style: 'display:flex;flex-direction:column;gap:12px' }, el('div', { class: 'slip' }, el('h4', { text: m.card.title || 'Create this ticket on ' + m.card.connectionName + '?' }), props));
+  const box = el('div', { class: 'card', style: 'display:flex;flex-direction:column;gap:12px' }, el('div', { class: 'slip' }, el('h4', { text: m.card.title || 'Create this ticket on ' + m.card.connectionName + '?' }), props));
   for (const w of m.card.warnings) box.append(el('div', { class: 'note warn' }, el('span', { class: 'stamp', text: /real issue/.test(w) ? 'Live' : 'Check' }), el('span', { text: w })));
   for (const e of m.errors) box.append(el('div', { class: 'note bad' }, el('span', { class: 'stamp', text: 'Error' }), el('span', { text: e })));
   if (m.unresolved.length) box.append(el('div', { class: 'note bad' }, el('span', { class: 'stamp', text: 'Missing' }), el('span', { text: m.unresolved.join(', ') + '. No real value is available for it.' })));
@@ -554,6 +625,9 @@ document.getElementById('hist').addEventListener('click', () => { histOpen ? clo
 
 input.addEventListener('input', () => { if (suggestOpen || histOpen) closeSuggestions(); hint(); });
 toggle.addEventListener('click', () => { suggestOpen ? closeSuggestions() : showSuggestions(); input.focus(); });
+sendBtn.addEventListener('click', () => { if (busy) return; const t = input.value.trim(); input.value = ''; submitText(t); input.focus(); });
+document.getElementById('newchat').addEventListener('click', () => { newChat(); input.focus(); });
+document.getElementById('closebtn').addEventListener('click', () => { if (bridge) bridge.hide(); });
 
 // Paste (Ctrl+V after Win+Shift+S) or drop an image onto the window: it becomes the same chip as a captured screenshot.
 input.addEventListener('paste', async e => {
@@ -620,7 +694,10 @@ function enter() {
 if (bridge) new ResizeObserver(() => bridge.resize(Math.ceil(shell.getBoundingClientRect().height) + 2 * PAD)).observe(shell);
 if (bridge) bridge.onFocus(() => { enter(); input.focus(); input.select(); loadStatus(); });
 // Room left on screen below the window: the results list scrolls inside it instead of running off the screen.
-if (bridge && bridge.onAvail) bridge.onAvail(h => document.documentElement.style.setProperty('--out-max', Math.max(160, h - (GLASS ? 60 : 62) - 36 - 2 * PAD) + 'px'));
+if (bridge && bridge.onAvail) bridge.onAvail(h => {
+  document.documentElement.style.setProperty('--out-max', Math.max(160, h - (GLASS ? 60 : 62) - 36 - 2 * PAD) + 'px');
+  document.documentElement.style.setProperty('--chat-max', Math.max(300, h - 2 * PAD) + 'px');
+});
 loadStatus(); hint(); input.focus();
 </script>
 </body>

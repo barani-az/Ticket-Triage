@@ -34,6 +34,9 @@ export type UiToCore =
 const YES = /^\s*(yes( please)?|yep|yeah|ok(ay)?|sure|create( it| the ticket)?|confirm|go ahead|do it|submit|looks good|lgtm)[\s.!]*$/i;
 const CANCEL = /^\s*(cancel( it)?|discard( it)?|never ?mind|drop it|forget it|don'?t create( it)?)[\s.!]*$/i;
 const NO = /^\s*(no|nope)[\s.!]*$/i;
+// Small talk is answered here at once: no model call, no waiting, nothing sent anywhere.
+const GREETING = /^\s*(hi|hii+|hello|hey|yo|good (morning|afternoon|evening))( there)?[\s.!]*$/i;
+const THANKS = /^\s*(thanks|thank you|thx|ty)( so much| a lot)?[\s.!]*$/i;
 
 
 export type CoreToUi =
@@ -259,6 +262,10 @@ export class Session {
     if (live && !images?.length) {
       if (CANCEL.test(text) || (live.kind === 'confirming' && NO.test(text))) return this.drop();
       if (live.kind === 'confirming' && YES.test(text)) return this.confirm();
+    }
+    if (!images?.length && (GREETING.test(text) || THANKS.test(text))) {
+      const reply = THANKS.test(text) ? "You're welcome." : 'Hi. Tell me what you need: a problem, a task or a question.';
+      return [{ type: 'assistant', text: reply }, ...this.repeatPrompt()];
     }
     const draft: DraftContext | undefined =
       live && this.reasoning

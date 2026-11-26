@@ -84,6 +84,10 @@ This is a conversation. If a draft ticket is being discussed:
 - When they only ask a question or chat, choose "answer" and leave the draft alone.
 - Never say a ticket has been created: the app creates it only when the user confirms.
 
+Never ask two clarifying questions in a row. If you already asked once and the user is still vague: when it is a problem on their computer or in an app, choose "screenshot" and offer to look; otherwise propose the best ticket you can from what they said. An "IT task" or "IT issue" means a problem with their computer, network or software, not a Jira task.
+
+"suggestions" are things the user might actually say. Never invent specific problems, names or details they have not mentioned; offer an empty list instead.
+
 Talk like a helpful colleague. When an important detail is missing (for a bug: how to reproduce it, or what they expected), end your reply with ONE short question asking for it. Do not repeat a question they already answered or declined.
 
 Making a ticket FROM an email or a Teams chat ("make a ticket from Priya's email about checkout", "log the bug from the release chat"): use intent "ticket" with "from": {"kind":"email"|"chat","query":the words to search for, such as the sender's name or subject words, or "" for the latest}. Propose no ticket yet: the app shows matching emails or chats, the user picks one, and you get its content next.
@@ -122,7 +126,15 @@ export function parseAdvice(raw: unknown): Advice | undefined {
   const reply = str(r.reply, 700);
   if (!reply) return undefined;
   const suggestions = Array.isArray(r.suggestions)
-    ? (r.suggestions.map((s) => str(s, 90)).filter(Boolean) as string[]).slice(0, 3)
+    // Models sometimes write suggestions as sentence continuations (", assign this to me").
+    ? (r.suggestions
+        .map((s) => {
+          if (typeof s !== 'string') return undefined;
+          const trimmed = s.replace(/^[\s,;:.\-]+/, '');
+          // Only a continuation that lost its punctuation needs a capital; others are left as written.
+          return str(trimmed === s.trimStart() ? trimmed : trimmed.replace(/^./, (c) => c.toUpperCase()), 90);
+        })
+        .filter(Boolean) as string[]).slice(0, 3)
     : [];
   const advice: Advice = { intent: r.intent as Advice['intent'], reply, reasoning: str(r.reasoning, 400), suggestions };
   const from = r.from as Record<string, unknown> | undefined;
@@ -210,13 +222,16 @@ export async function advise(
   source?: QuotedSource,
 ): Promise<Advice | undefined> {
   const user = buildPrompt(history, text, ctx, Boolean(images?.length), draft, source);
+  // Per model, and for all models together. A person is waiting; a screenshot takes longer to read.
+  const limits = images?.length ? { timeoutMs: 20_000, budgetMs: 40_000 } : { timeoutMs: 10_000, budgetMs: 22_000 };
   try {
-    // Thinking takes longer than plain extraction, so this call gets its own, longer timeout.
-    return parseAdvice(await llm.extractJson({ system: SYSTEM, user, images, effort: 'medium', timeoutMs: 30_000 }));
-  } catch {
+    return parseAdvice(await llm.extractJson({ system: SYSTEM, user, images, effort: 'medium', ...limits }));
+  } catch (e) {
+    // Retry only when the request itself was rejected (some models refuse the reasoning setting).
+    // Repeating a timeout or an overload would just make the user wait twice.
+    if (!/\b400\b/.test((e as Error).message)) return undefined;
     try {
-      // Some models reject the reasoning setting; one retry without it.
-      return parseAdvice(await llm.extractJson({ system: SYSTEM, user, images, timeoutMs: 25_000 }));
+      return parseAdvice(await llm.extractJson({ system: SYSTEM, user, images, ...limits }));
     } catch {
       return undefined;
     }
