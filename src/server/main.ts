@@ -12,7 +12,6 @@ const autoCreate = process.env.AUTO_CREATE !== '0';
 const app = await createApp(process.env, {
   dataDir: path.join(root, 'data'),
   root,
-  stdioMcp: true,
   autoCreate: () => autoCreate,
 });
 

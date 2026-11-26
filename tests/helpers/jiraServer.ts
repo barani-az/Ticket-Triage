@@ -1,6 +1,6 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { JiraConnector } from '../core/connectors/jira.js';
+import type { JiraConnector } from './jiraConnector.js';
 
 const WRITE_TOOL = 'create_issue';
 

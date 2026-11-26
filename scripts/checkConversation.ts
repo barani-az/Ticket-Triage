@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { JiraConnector } from '../src/core/connectors/jira.js';
+import { JiraConnector } from '../tests/helpers/jiraConnector.js';
 import { AuditLog } from '../src/core/executor.js';
 import { gatewayFromEnv } from '../src/core/llm.js';
 import { Session, type CoreToUi, type UiToCore } from '../src/core/session.js';
-import { startMockJira } from '../src/mock/jiraMock.js';
+import { startMockJira } from '../tests/helpers/jiraMock.js';
 import { parseEnv } from '../src/shell/env.js';
 
 /**

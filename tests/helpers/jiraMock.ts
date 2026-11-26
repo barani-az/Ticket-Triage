@@ -1,9 +1,9 @@
 import http from 'node:http';
 
 /**
- * A tiny in-memory stand-in for Jira's REST API (v2 paths), so the demo runs without an
- * account. It validates required fields like the real thing does, which lets the demo show
- * "the tool's own data decides".
+ * The test Jira: a tiny in-memory stand-in for Jira's REST API (v2 paths). It validates required
+ * fields like the real thing does, so tests can show "the tool's own data decides".
+ * Not part of the app: Jira is connected through /connect (Atlassian Rovo).
  */
 
 const PROJECTS = [

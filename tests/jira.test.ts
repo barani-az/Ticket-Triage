@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { JiraConnector } from '../src/core/connectors/jira.js';
-import { startMockJira } from '../src/mock/jiraMock.js';
+import { JiraConnector } from './helpers/jiraConnector.js';
+import { startMockJira } from './helpers/jiraMock.js';
 
 let mock: Awaited<ReturnType<typeof startMockJira>>;
 let jira: JiraConnector;

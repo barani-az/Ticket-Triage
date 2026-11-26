@@ -62,6 +62,13 @@ describe('/connect', () => {
     expect(llm.calls).toHaveLength(0);
   });
 
+  it('asks to /connect when a ticket is wanted but no Jira is connected', async () => {
+    const session = new Session({ connections: [], audit: audit(), connect: fakeHooks().hooks });
+    expect(await session.handle({ type: 'submit', text: 'create a bug for the login page crashing' })).toEqual([
+      { type: 'assistant', text: "Jira isn't connected yet. Run /connect to sign in, then ask again.", suggestions: ['/connect'] },
+    ]);
+  });
+
   it('says other connectors are coming later, and that it is unavailable without sign-in hooks', async () => {
     const session = new Session({ connections: [], audit: audit(), connect: fakeHooks().hooks });
     await session.handle({ type: 'submit', text: '/connect' });
