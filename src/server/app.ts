@@ -93,10 +93,23 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     }
   }
 
+  // What /connect remembers between launches (no secrets: tokens stay in each service's own store).
+  const savedFile = path.join(opts.dataDir, 'connections.json');
+  let saved: { m365?: { work: boolean } } = {};
+  try {
+    saved = JSON.parse(fs.readFileSync(savedFile, 'utf8'));
+  } catch {
+    /* first launch */
+  }
+  const root = opts.root ?? process.cwd();
+  // A personal account needs the "consumers" authority, or its sign-in stops working after about an hour.
+  const ms365Env = (work: boolean) => ({ ...env, M365_WORK: work ? '1' : '0', M365_TENANT_ID: env.M365_TENANT_ID ?? (work ? undefined : 'consumers') });
+
   let m365Error: string | undefined;
-  if (env.M365 === '1') {
+  if (env.M365 === '1' || saved.m365) {
     try {
-      connections.push(await connectMs365(opts.root ?? process.cwd(), env));
+      const work = env.M365_WORK !== undefined ? env.M365_WORK === '1' : Boolean(saved.m365?.work);
+      connections.push(await connectMs365(root, ms365Env(work)));
     } catch (e) {
       m365Error = (e as Error).message;
     }
@@ -107,9 +120,17 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   const connect = createConnect({
     connections,
     rovo: (o) => connectRovo(true, o),
-    // A personal account needs the "consumers" authority, or its sign-in stops working after about an hour.
-    ms365: ({ work, deviceCode }) =>
-      connectMs365(opts.root ?? process.cwd(), { ...env, M365_WORK: work ? '1' : '0', M365_TENANT_ID: env.M365_TENANT_ID ?? (work ? undefined : 'consumers') }, { deviceCode }),
+    ms365: ({ work, deviceCode }) => connectMs365(root, ms365Env(work), { deviceCode }),
+    remember: (tool, settings) => {
+      if (tool === 'jira') {
+        if (!settings) fs.rmSync(rovoStore, { force: true }); // signing out of Jira forgets its tokens
+        return;
+      }
+      saved = { ...saved, m365: settings };
+      if (!settings) delete saved.m365;
+      fs.mkdirSync(opts.dataDir, { recursive: true });
+      fs.writeFileSync(savedFile, JSON.stringify(saved, null, 2));
+    },
   });
   const session = new Session({ connections, audit, llm, autoCreate: opts.autoCreate, connect });
 

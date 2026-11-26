@@ -11,6 +11,11 @@ export interface ConnectDeps {
   ms365(opts: { work: boolean; deviceCode: boolean }): Promise<Connection>;
   /** How often to check whether a sign-in code has been entered (default 3 s). */
   pollMs?: number;
+  /**
+   * Keep what is needed to reconnect at the next launch, or forget it on sign-out (no `settings`).
+   * Microsoft 365 needs the account kind; Jira's saved sign-in is its token file.
+   */
+  remember?(tool: ConnectTool, settings?: { work: boolean }): void;
 }
 
 const BROWSER_SIGN_IN_MS = 5 * 60_000;
@@ -79,7 +84,11 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
         signedIn = untilSignedIn(ms, ac.signal);
       }
     }
-    const done = signedIn.then(() => goLive(conn, 'Microsoft 365'));
+    const done = signedIn.then(async () => {
+      const who = await goLive(conn, 'Microsoft 365');
+      d.remember?.('m365', { work });
+      return who;
+    });
     done.catch(stop); // a failed or cancelled sign-in shuts its server down
     pending.set('m365', { done, cancel: stop });
     return start;
@@ -93,6 +102,11 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
       await new Promise((r) => setTimeout(r, d.pollMs ?? 3000));
     }
     throw new Error('Sign-in timed out: the code expired.');
+  };
+
+  const cancel = (tool: ConnectTool) => {
+    pending.get(tool)?.cancel();
+    pending.delete(tool);
   };
 
   return {
@@ -132,9 +146,16 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
       }
     },
 
-    cancel(tool) {
-      pending.get(tool)?.cancel();
-      pending.delete(tool);
+    cancel,
+
+    async signOut(tool) {
+      cancel(tool);
+      const i = d.connections.findIndex((c) => c.id === CONNECTION_ID[tool]);
+      const conn = i < 0 ? undefined : d.connections.splice(i, 1)[0];
+      // Microsoft 365's tokens live in its server's cache, so the server clears them.
+      if (tool === 'm365' && conn) await (conn.connector as Ms365Connector).logout().catch(() => undefined);
+      await conn?.connector.close?.().catch(() => undefined);
+      d.remember?.(tool);
     },
   };
 }

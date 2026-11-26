@@ -12,14 +12,14 @@ const signinOf = (msgs: CoreToUi[]) => msgs.find((m) => m.type === 'signin') as 
 const resultOf = (msgs: CoreToUi[]) => msgs.find((m) => m.type === 'result') as Extract<CoreToUi, { type: 'result' }> | undefined;
 
 /** Hooks whose sign-in results are scripted per call; `calls` records what the session asked for. */
-function fakeHooks(script: { start?: (SignInStart | Error)[]; finish?: (string | Error | Promise<string>)[] } = {}) {
+function fakeHooks(script: { start?: (SignInStart | Error)[]; finish?: (string | Error | Promise<string>)[]; connected?: ('m365' | 'jira')[] } = {}) {
   const calls: string[] = [];
   let s = 0;
   let f = 0;
   const hooks: ConnectHooks = {
     status: async () => [
-      { tool: 'm365', connected: false, detail: 'not connected' },
-      { tool: 'jira', connected: true, detail: 'connected to example.atlassian.net' },
+      { tool: 'm365', connected: Boolean(script.connected?.includes('m365')), detail: script.connected?.includes('m365') ? 'connected as priya@contoso.example' : 'not connected' },
+      { tool: 'jira', connected: Boolean(script.connected?.includes('jira')), detail: script.connected?.includes('jira') ? 'connected to example.atlassian.net' : 'not connected' },
     ],
     start: async (tool, opts) => {
       calls.push(`start ${tool} ${JSON.stringify(opts)}`);
@@ -34,6 +34,7 @@ function fakeHooks(script: { start?: (SignInStart | Error)[]; finish?: (string |
       return r;
     },
     cancel: (tool) => void calls.push(`cancel ${tool}`),
+    signOut: async (tool) => void calls.push(`signOut ${tool}`),
   };
   return { hooks, calls };
 }
@@ -47,7 +48,7 @@ const recordingLlm = () => {
 
 describe('/connect', () => {
   it('lists the tools with their live status, and never reaches the LLM', async () => {
-    const { hooks } = fakeHooks();
+    const { hooks } = fakeHooks({ connected: ['jira'] });
     const llm = recordingLlm();
     const session = new Session({ connections: [], audit: audit(), llm: llm.gw, connect: hooks });
     const q = questionOf(await session.handle({ type: 'submit', text: '/connect' }))!;
@@ -109,6 +110,26 @@ describe('/connect', () => {
     expect(signinOf(await session.handle({ type: 'answer', choiceId: 'personal' }))).toMatchObject({ how: 'browser', alt: { id: 'code', label: 'Use a code instead' } });
     expect(signinOf(await session.handle({ type: 'answer', choiceId: 'code' }))).toMatchObject({ how: 'code', code: 'ABCD1234' });
     expect(calls).toEqual(['start m365 {"work":false}', 'cancel m365', 'start m365 {"work":false,"deviceCode":true}']);
+  });
+
+  it('a connected tool offers sign out, sign in again, or leaving it alone', async () => {
+    const { hooks, calls } = fakeHooks({ connected: ['jira', 'm365'] });
+    const session = new Session({ connections: [], audit: audit(), connect: hooks });
+    await session.handle({ type: 'submit', text: '/connect' });
+    const q = questionOf(await session.handle({ type: 'answer', choiceId: 'jira' }))!;
+    expect(q.text).toBe('Jira Cloud is connected to example.atlassian.net. What would you like to do?');
+    expect(q.choices.map((c) => c.id)).toEqual(['again', 'signout', 'keep']);
+    expect(resultOf(await session.handle({ type: 'answer', choiceId: 'signout' }))).toEqual({ type: 'result', ok: true, stamp: 'Signed out', text: 'of Jira Cloud' });
+
+    await session.handle({ type: 'submit', text: '/connect' });
+    await session.handle({ type: 'answer', choiceId: 'm365' });
+    // Signing in again starts from the account kind, so the user can switch accounts.
+    expect(questionOf(await session.handle({ type: 'answer', choiceId: 'again' }))!.choices.map((c) => c.id)).toEqual(['work', 'personal']);
+
+    await session.handle({ type: 'submit', text: '/connect' });
+    await session.handle({ type: 'answer', choiceId: 'm365' });
+    expect(await session.handle({ type: 'answer', choiceId: 'keep' })).toEqual([{ type: 'info', text: 'Nothing changed.' }]);
+    expect(calls).toEqual(['signOut jira', 'signOut m365']);
   });
 
   it('cancelling a sign-in stops it, and the late result is dropped', async () => {

@@ -48,6 +48,8 @@ export interface ConnectHooks {
   /** Resolves with who is now connected, once the user has finished signing in. */
   finish(tool: ConnectTool): Promise<string>;
   cancel(tool: ConnectTool): void;
+  /** Disconnect and forget the sign-in. */
+  signOut(tool: ConnectTool): Promise<void>;
 }
 
 const SERVICE: Record<ConnectTool, { name: string; owner: string }> = {
@@ -74,7 +76,7 @@ type State =
   | { kind: 'source'; request: string; from: SourceRequest['kind']; conn: Connection; candidates: Candidate[] }
   | { kind: 'asking'; request: string; conn: Connection; qn: Questionnaire; source?: SourceContent }
   | { kind: 'confirming'; request: string; conn: Connection; qn: Questionnaire; plan: Plan; unresolved: string[]; source?: SourceContent }
-  | { kind: 'connect'; step: 'tool' | 'account' | 'retry'; tool?: ConnectTool; work?: boolean; choices: Candidate[] }
+  | { kind: 'connect'; step: 'tool' | 'account' | 'retry' | 'manage'; tool?: ConnectTool; work?: boolean; choices: Candidate[]; connected?: ConnectTool[] }
   | { kind: 'signing-in'; tool: ConnectTool; work?: boolean; how: 'browser' | 'code' };
 
 export interface SessionDeps {
@@ -411,7 +413,7 @@ export class Session {
       { id: 'jira', label: SERVICE.jira.name, detail: detail('jira') },
       { id: 'other', label: 'Other connectors', detail: 'coming later' },
     ];
-    this.state = { kind: 'connect', step: 'tool', choices };
+    this.state = { kind: 'connect', step: 'tool', choices, connected: status.filter((x) => x.connected).map((x) => x.tool) };
     return [this.pickQuestion('connect', '__connect', 'Connect which tool?', choices)];
   }
 
@@ -421,9 +423,32 @@ export class Session {
         this.state = { kind: 'idle' };
         return [{ type: 'info', text: 'Other connectors are coming in a later version.' }];
       }
-      return id === 'm365' ? this.askAccount() : this.beginSignIn('jira', {});
+      const tool = id as ConnectTool;
+      if (s.connected?.includes(tool)) {
+        const choices: Candidate[] = [
+          { id: 'again', label: 'Sign in again', detail: 'for example with another account' },
+          { id: 'signout', label: 'Sign out', detail: 'disconnect and forget the sign-in' },
+          { id: 'keep', label: 'Keep it as it is' },
+        ];
+        this.state = { kind: 'connect', step: 'manage', tool, choices };
+        const detail = s.choices.find((c) => c.id === tool)?.detail ?? 'connected';
+        return [this.pickQuestion('manage', '__connect', `${SERVICE[tool].name} is ${detail}. What would you like to do?`, choices)];
+      }
+      return tool === 'm365' ? this.askAccount() : this.beginSignIn('jira', {});
     }
     if (s.step === 'account') return this.beginSignIn('m365', { work: id === 'work' });
+    if (s.step === 'manage') {
+      const tool = s.tool!;
+      if (id === 'keep') {
+        this.state = { kind: 'idle' };
+        return [{ type: 'info', text: 'Nothing changed.' }];
+      }
+      await this.deps.connect!.signOut(tool);
+      this.projects = undefined;
+      if (id === 'again') return tool === 'm365' ? this.askAccount() : this.beginSignIn('jira', {});
+      this.state = { kind: 'idle' };
+      return [{ type: 'result', ok: true, stamp: 'Signed out', text: `of ${SERVICE[tool].name}` }];
+    }
     // step 'retry', after a failed sign-in
     if (id === 'code' || id === 'browser') return this.beginSignIn(s.tool!, { work: s.work, deviceCode: id === 'code' });
     this.state = { kind: 'idle' };

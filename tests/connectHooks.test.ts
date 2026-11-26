@@ -119,6 +119,28 @@ describe('createConnect: Microsoft 365', () => {
     expect(await hooks.finish('m365')).toBe('Microsoft 365 as priya@contoso.example');
   });
 
+  it('remembers the account kind, and signing out clears the sign-in and forgets it', async () => {
+    const state: FakeMs365State = { signedIn: false, login: 'browser' };
+    const remembered: unknown[] = [];
+    const connections: Connection[] = [];
+    const hooks = createConnect({ connections, rovo: () => rovoConnection(), ms365: (o) => ms365Connection(state, o.work), remember: (...a) => void remembered.push(a) });
+    await hooks.start('m365', { work: false });
+    await hooks.finish('m365');
+    await hooks.start('jira', {});
+    await hooks.finish('jira');
+    expect(connections.map((c) => c.id)).toEqual(['m365', 'rovo']);
+
+    await hooks.signOut('m365');
+    expect(state.signedIn).toBe(false); // the server cleared its token cache
+    await hooks.signOut('jira');
+    expect(connections).toEqual([]);
+    expect(remembered).toEqual([['m365', { work: false }], ['m365'], ['jira']]);
+    expect(await hooks.status()).toEqual([
+      { tool: 'm365', connected: false, detail: 'not connected' },
+      { tool: 'jira', connected: false, detail: 'not connected' },
+    ]);
+  });
+
   it('adds nothing when the organisation blocks the app, or when the code is cancelled', async () => {
     const blocked = setup({ signedIn: false, login: 'blocked' });
     await blocked.hooks.start('m365', { work: true });
