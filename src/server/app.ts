@@ -9,7 +9,7 @@ import { ROVO_URL, RovoJiraConnector } from '../core/connectors/rovo.js';
 import { AuditLog } from '../core/executor.js';
 import { gatewayFromEnv } from '../core/llm.js';
 import { Session } from '../core/session.js';
-import { connectMs365 } from '../mcp/ms365Server.js';
+import { connectMs365, followMs365Log } from '../mcp/ms365Server.js';
 import { createConnect } from './connect.js';
 import { connectRemoteMcp } from '../mcp/remote.js';
 import { startMockJira } from '../mock/jiraMock.js';
@@ -105,11 +105,16 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   // A personal account needs the "consumers" authority, or its sign-in stops working after about an hour.
   const ms365Env = (work: boolean) => ({ ...env, M365_WORK: work ? '1' : '0', M365_TENANT_ID: env.M365_TENANT_ID ?? (work ? undefined : 'consumers') });
 
+  // Sign-in steps and the Microsoft 365 server's own log go to the terminal. M365_LOGS=0 turns this off.
+  const quiet = env.M365_LOGS === '0';
+  const say = (tag: string) => (line: string) => quiet || console.log(`[${tag}] ${line}`);
+  const stopLog = quiet ? undefined : followMs365Log(say('ms365'));
+
   let m365Error: string | undefined;
   if (env.M365 === '1' || saved.m365) {
     try {
       const work = env.M365_WORK !== undefined ? env.M365_WORK === '1' : Boolean(saved.m365?.work);
-      connections.push(await connectMs365(root, ms365Env(work)));
+      connections.push(await connectMs365(root, ms365Env(work), { log: say('ms365') }));
     } catch (e) {
       m365Error = (e as Error).message;
     }
@@ -120,7 +125,8 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   const connect = createConnect({
     connections,
     rovo: (o) => connectRovo(true, o),
-    ms365: ({ work, deviceCode }) => connectMs365(root, ms365Env(work), { deviceCode }),
+    ms365: ({ work, deviceCode }) => connectMs365(root, ms365Env(work), { deviceCode, log: say('ms365') }),
+    log: say('connect'),
     ms365Browser: Boolean(env.M365_CLIENT_ID),
     remember: (tool, settings) => {
       if (tool === 'jira') {
@@ -164,6 +170,7 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
       };
     },
     async close() {
+      stopLog?.();
       await Promise.all(connections.map((c) => c.connector.close?.()));
       await closeMock?.();
     },

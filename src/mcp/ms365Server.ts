@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -36,14 +38,48 @@ export function ms365Command(root: string, env: NodeJS.ProcessEnv, extra: string
  * Start the server for one account kind. Sign-in opens Microsoft's page in the browser and comes back to
  * a local address (--auth-browser); with `deviceCode` it gives a code to enter on Microsoft's page instead.
  */
-export async function connectMs365(root: string, env: NodeJS.ProcessEnv, opts: { deviceCode?: boolean } = {}): Promise<Connection> {
+export async function connectMs365(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  opts: { deviceCode?: boolean; log?: (line: string) => void } = {},
+): Promise<Connection> {
   const { command, args, env: childEnv, work } = ms365Command(root, env, opts.deviceCode ? [] : ['--auth-browser']);
   const client = new Client({ name: 'ticket-triage', version: '0.0.1' });
-  await client.connect(new StdioClientTransport({ command, args, env: { ...childEnv, SILENT: 'true' }, stderr: 'ignore' }));
+  const transport = new StdioClientTransport({ command, args, env: { ...childEnv, SILENT: 'true' }, stderr: opts.log ? 'pipe' : 'ignore' });
+  // Its stderr carries only startup problems and crashes; everything else goes to its log file (followMs365Log).
+  transport.stderr?.on('data', (d: Buffer) => d.toString().split('\n').filter((l) => l.trim()).forEach((l) => opts.log!(l)));
+  await client.connect(transport);
   return {
     id: 'm365',
     name: 'Microsoft 365',
     readOnly: env.M365_READONLY === '1',
     connector: new Ms365Connector(client, { work, timeZone: env.M365_TIME_ZONE }),
   };
+}
+
+/**
+ * Print what the Microsoft 365 server logs. It can't log to the console (its stdout is the MCP channel), so
+ * it writes to a file; this follows the file from now on. Tokens and email addresses are redacted by the server.
+ */
+export function followMs365Log(print: (line: string) => void): () => void {
+  const file = path.join(process.env.MS365_MCP_LOG_DIR || path.join(os.homedir(), '.ms-365-mcp-server', 'logs'), 'mcp-server.log');
+  let pos = fs.existsSync(file) ? fs.statSync(file).size : 0;
+  const read = () => {
+    let size: number;
+    try {
+      size = fs.statSync(file).size;
+    } catch {
+      return;
+    }
+    if (size < pos) pos = 0; // the log was rotated
+    if (size === pos) return;
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(size - pos);
+    fs.readSync(fd, buf, 0, buf.length, pos);
+    fs.closeSync(fd);
+    pos = size;
+    for (const line of buf.toString('utf8').split('\n')) if (line.trim()) print(line);
+  };
+  fs.watchFile(file, { interval: 1000 }, read);
+  return () => fs.unwatchFile(file, read);
 }

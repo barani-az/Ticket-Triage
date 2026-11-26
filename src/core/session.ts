@@ -88,6 +88,7 @@ export function signInError(e: unknown): string {
     return 'Your organisation needs an admin to approve this app before you can connect. Ask IT to approve it (the request is in docs/decisions.md), then try again.';
   }
   if (/AADSTS(50020|700016|50194)/i.test(m)) return "This account can't sign in to this app. Try the other account type, or ask IT for the company's own app registration.";
+  if (/access failed: 403/i.test(m)) return 'You signed in, but Microsoft refused access to your account (403). Run /connect and sign in again to approve the missing permission.';
   if (/access_denied|declined|denied/i.test(m)) return 'Access was not approved, so nothing was connected.';
   if (/cancel/i.test(m)) return 'Sign-in was cancelled. Nothing was connected.';
   if (/timed? ?out|expired/i.test(m)) return 'Sign-in timed out. Run /connect to try again.';

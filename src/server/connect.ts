@@ -22,6 +22,8 @@ export interface ConnectDeps {
    * Microsoft 365 needs the account kind; Jira's saved sign-in is its token file.
    */
   remember?(tool: ConnectTool, settings?: { work: boolean }): void;
+  /** Where to report each sign-in step (the terminal, in the app). */
+  log?(line: string): void;
 }
 
 const BROWSER_SIGN_IN_MS = 5 * 60_000;
@@ -38,6 +40,7 @@ interface Pending {
 /** The sign-in side of /connect: starts each sign-in, and adds the connection when it finishes. */
 export function createConnect(d: ConnectDeps): ConnectHooks {
   const pending = new Map<ConnectTool, Pending>();
+  const log = (line: string) => d.log?.(line);
 
   const replace = async (conn: Connection) => {
     const i = d.connections.findIndex((c) => c.id === conn.id);
@@ -59,6 +62,7 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
 
   /** Microsoft 365: a fresh server for the chosen account kind, signed in by browser or by code. */
   const startMs365 = async (work: boolean, deviceCode: boolean): Promise<SignInStart> => {
+    log(`Microsoft 365 (${work ? 'work or school' : 'personal'} account): starting sign-in with ${deviceCode ? 'a code' : 'the browser'}`);
     const conn = await d.ms365({ work, deviceCode });
     const ms = conn.connector as Ms365Connector;
     const ac = new AbortController();
@@ -69,6 +73,7 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
     let start: SignInStart;
     let signedIn: Promise<unknown>;
     if ((await ms.testConnection()).ok) {
+      log('Microsoft 365: already signed in');
       start = { how: 'ready' };
       signedIn = Promise.resolve();
     } else if (!deviceCode) {
@@ -86,6 +91,7 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
         start = { how: 'ready' };
         signedIn = Promise.resolve();
       } else {
+        log(`Microsoft 365: code issued; waiting for it to be entered at ${r.url}`);
         start = { how: 'code', url: r.url, code: r.code };
         signedIn = untilSignedIn(ms, ac.signal);
       }
@@ -93,18 +99,27 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
     const done = signedIn.then(async () => {
       const who = await goLive(conn, 'Microsoft 365');
       d.remember?.('m365', { work });
+      log(`Microsoft 365: connected (${who})`);
       return who;
     });
-    done.catch(stop); // a failed or cancelled sign-in shuts its server down
+    done.catch((e) => {
+      log(`Microsoft 365: sign-in ended without connecting: ${(e as Error).message}`);
+      stop(); // a failed or cancelled sign-in shuts its server down
+    });
     pending.set('m365', { done, cancel: stop });
     return start;
   };
 
   /** After a code is shown, the server polls Microsoft; this checks until the user has entered it. */
   const untilSignedIn = async (ms: Ms365Connector, signal: AbortSignal) => {
+    let said = '';
     for (const until = Date.now() + CODE_SIGN_IN_MS; Date.now() < until; ) {
       if (signal.aborted) throw new Error('Sign-in cancelled.');
-      if ((await ms.testConnection()).ok) return;
+      const st = await ms.testConnection();
+      if (st.ok) return;
+      // Signed in, but Microsoft refuses the account check: waiting longer would never help.
+      if (/access failed|\b403\b/i.test(st.error)) throw new Error(st.error);
+      if (st.error !== said) log(`Microsoft 365: still waiting (${(said = st.error)})`);
       await new Promise((r) => setTimeout(r, d.pollMs ?? 3000));
     }
     throw new Error('Sign-in timed out: the code expired.');
@@ -134,9 +149,14 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
       const ac = new AbortController();
       let showUrl!: (url: string) => void;
       const urlShown = new Promise<string>((r) => (showUrl = r));
-      const signedIn = d.rovo({ onUrl: (url) => showUrl(url), signal: ac.signal });
-      const done = signedIn.then((conn) => goLive(conn, 'Jira Cloud'));
-      done.catch(() => undefined); // finish() reports it; this only avoids an unhandled rejection meanwhile
+      log('Jira Cloud: starting Atlassian sign-in');
+      const signedIn = d.rovo({ onUrl: (url) => (log(`Jira Cloud: sign-in page opened in the browser: ${url}`), showUrl(url)), signal: ac.signal });
+      const done = signedIn.then(async (conn) => {
+        const who = await goLive(conn, 'Jira Cloud');
+        log(`Jira Cloud: connected (${who})`);
+        return who;
+      });
+      done.catch((e) => log(`Jira Cloud: sign-in ended without connecting: ${(e as Error).message}`));
       pending.set(tool, { done, cancel: () => ac.abort() });
       // The browser opens (we get its address), or a saved sign-in is still valid and no browser is needed.
       return Promise.race([urlShown.then((url) => ({ how: 'browser' as const, url })), signedIn.then(() => ({ how: 'ready' as const }))]);
@@ -164,6 +184,7 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
       if (tool === 'm365' && conn) await (conn.connector as Ms365Connector).logout().catch(() => undefined);
       await conn?.connector.close?.().catch(() => undefined);
       d.remember?.(tool);
+      log(`${tool === 'm365' ? 'Microsoft 365' : 'Jira Cloud'}: signed out`);
     },
   };
 }

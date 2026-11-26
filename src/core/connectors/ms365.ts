@@ -14,6 +14,9 @@ const PERSONAL_TOOLS = [
   'login',
   'logout',
   'verify-login',
+  // Not used by the app, but its scope (User.Read) is: the server's sign-in check reads /me, and without
+  // it every check gets 403, so a finished sign-in never counts as signed in.
+  'get-current-user',
   'list-todo-task-lists',
   'create-todo-task',
   'list-mail-messages',
@@ -146,7 +149,12 @@ export class Ms365Connector implements Connector {
   async testConnection() {
     try {
       const r = await this.call('verify-login');
-      if (!r?.success) return { ok: false as const, error: 'Not signed in to Microsoft 365. Type /connect to sign in.', needsReauth: true };
+      if (!r?.success) {
+        // "No valid token" means not signed in; anything else (e.g. "...Graph API access failed: 403") is a real error.
+        const why = String(r?.message ?? '');
+        const error = !why || /no (valid )?token|not (logged|signed) in/i.test(why) ? 'Not signed in to Microsoft 365. Type /connect to sign in.' : why;
+        return { ok: false as const, error, needsReauth: true };
+      }
       this.me = r.userData?.displayName ?? '';
       return { ok: true as const, actingAs: r.userData?.userPrincipalName ?? r.userData?.displayName ?? 'you' };
     } catch (e) {
