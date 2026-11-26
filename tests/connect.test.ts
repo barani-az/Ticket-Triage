@@ -132,6 +132,20 @@ describe('/connect', () => {
     expect(calls).toEqual(['signOut jira', 'signOut m365']);
   });
 
+  it('offers only a new code when a browser sign-in is not possible', async () => {
+    const { hooks } = fakeHooks({ start: [{ how: 'code', url: 'https://microsoft.com/devicelogin', code: 'ABCD1234' }], finish: [new Error('Sign-in timed out: the code expired.')] });
+    hooks.canUseBrowser = (tool) => tool === 'jira';
+    const session = new Session({ connections: [], audit: audit(), connect: hooks });
+    await session.handle({ type: 'submit', text: '/connect' });
+    await session.handle({ type: 'answer', choiceId: 'm365' });
+    const signin = signinOf(await session.handle({ type: 'answer', choiceId: 'personal' }))!;
+    expect(signin).toMatchObject({ how: 'code', code: 'ABCD1234' });
+    expect(signin.alt).toBeUndefined();
+    const msgs = await session.handle({ type: 'wait' });
+    expect(resultOf(msgs)).toMatchObject({ ok: false, text: 'Sign-in timed out. Run /connect to try again.' });
+    expect(questionOf(msgs)!.choices.map((c) => c.label)).toEqual(['Get a new code', 'Cancel']);
+  });
+
   it('cancelling a sign-in stops it, and the late result is dropped', async () => {
     let fail!: (e: Error) => void;
     const pending = new Promise<string>((_, reject) => (fail = reject));

@@ -117,9 +117,12 @@ Connect which tool?
 3  Other connectors    coming later
 ```
 
-- **Microsoft 365:** choose a work or school account (with Teams) or a personal one. Your browser
-  opens Microsoft's sign-in page; approve access and the window says *Connected as …*. If the browser
-  sign-in doesn't work out, *Use a code instead* shows a code to enter on Microsoft's page.
+- **Microsoft 365:** choose a work or school account (with Teams) or a personal one. The window shows a
+  code; *Copy code and open the page* takes you to Microsoft's sign-in page, where you paste it and
+  approve access, and the window says *Connected as …*. A code is needed because the server's ready-made
+  Microsoft app rejects a browser redirect to this machine ("redirect_uri is not valid"). With our own
+  app registration (`M365_CLIENT_ID`, the IT request in `docs/decisions.md`) Microsoft 365 signs in
+  through the browser like Jira, with *Use a code instead* as the fallback.
 - **Jira Cloud:** your browser opens Atlassian's sign-in page (the Rovo connection below).
 - **Already connected:** picking the tool offers *Sign in again* (for example with another account),
   *Sign out* (disconnects and deletes its sign-in), or leaving it as it is.

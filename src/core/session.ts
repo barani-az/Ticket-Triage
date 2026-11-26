@@ -50,6 +50,8 @@ export interface ConnectHooks {
   cancel(tool: ConnectTool): void;
   /** Disconnect and forget the sign-in. */
   signOut(tool: ConnectTool): Promise<void>;
+  /** Whether a browser sign-in is possible (default yes). Microsoft 365 needs our own app registration for it. */
+  canUseBrowser?(tool: ConnectTool): boolean;
 }
 
 const SERVICE: Record<ConnectTool, { name: string; owner: string }> = {
@@ -502,11 +504,12 @@ export class Session {
       }
       // Offer another way in: a code works when the browser sign-in can't (Microsoft 365 only).
       const cancel = { id: 'cancel', label: 'Cancel' };
+      const browser = this.deps.connect!.canUseBrowser?.(s.tool) ?? true;
       const choices: Candidate[] =
         s.tool !== 'm365'
           ? [{ id: 'browser', label: 'Try again' }, cancel]
           : s.how === 'code'
-            ? [{ id: 'code', label: 'Get a new code' }, { id: 'browser', label: 'Use the browser instead' }, cancel]
+            ? [{ id: 'code', label: 'Get a new code' }, ...(browser ? [{ id: 'browser', label: 'Use the browser instead' }] : []), cancel]
             : [{ id: 'code', label: 'Sign in with a code instead' }, { id: 'browser', label: 'Try the browser again' }, cancel];
       this.state = { kind: 'connect', step: 'retry', tool: s.tool, work: s.work, choices };
       return [failed, this.pickQuestion('retry', '__connect', 'Try again?', choices)];

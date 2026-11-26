@@ -162,6 +162,7 @@ The app reaches Outlook, the calendar, To Do and Teams through [ms-365-mcp-serve
 **What follows from this:**
 - **It is a community project, not Microsoft's, and it holds the Microsoft tokens.** It needs a security review before a company rollout, and upgrades must stay pinned to exact versions.
 - **The Artizent tenant may block the ready-made app.** If so, use our own registration (the Entra request below).
+- **The ready-made app only signs in with a code.** Its registration does not accept a browser redirect to this machine ("redirect_uri is not valid", seen on 2026-11-26 with a personal account). Browser sign-in arrives with our own registration.
 - **Token key on disk.** npm skipped keytar's native build, so the server keeps its token key in a file next to its cache instead of in the OS keychain. A release build needs keytar built for Electron.
 
 **Needs sign-off:** using a third-party server for Microsoft 365, and the security review.
@@ -208,8 +209,8 @@ Things to know before buying:
 **What to ask IT for:**
 - **Name:** Ticket Triage (desktop)
 - **Supported account types:** this organisation only (single tenant)
-- **Platform:** Mobile and desktop applications. The app signs in with a device code (a URL and a code to enter there), which needs no redirect URI.
-- **Allow public client flows:** Yes. Device-code sign-in needs it, and the app ships no client secret.
+- **Platform:** Mobile and desktop applications, with the redirect URI `http://localhost`. Browser sign-in returns there (any port is allowed for localhost). The server's ready-made app lacks it, which is why `/connect` falls back to a code without our own registration.
+- **Allow public client flows:** Yes. Code sign-in needs it, and the app ships no client secret.
 - **Permissions:** delegated permissions only, so the app always acts as the signed-in user. No application permissions.
 - **Admin consent:** granted for the whole organisation, so users are not prompted one by one.
 

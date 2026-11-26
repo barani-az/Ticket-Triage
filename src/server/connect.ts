@@ -12,6 +12,12 @@ export interface ConnectDeps {
   /** How often to check whether a sign-in code has been entered (default 3 s). */
   pollMs?: number;
   /**
+   * Microsoft's browser sign-in returns to http://localhost, which only an app registration that lists it
+   * accepts: our own (M365_CLIENT_ID). The server's ready-made app rejects it ("redirect_uri is not
+   * valid"), so without our own registration Microsoft 365 always signs in with a code.
+   */
+  ms365Browser?: boolean;
+  /**
    * Keep what is needed to reconnect at the next launch, or forget it on sign-out (no `settings`).
    * Microsoft 365 needs the account kind; Jira's saved sign-in is its token file.
    */
@@ -124,7 +130,7 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
 
     async start(tool, opts): Promise<SignInStart> {
       pending.get(tool)?.cancel();
-      if (tool === 'm365') return startMs365(Boolean(opts.work), Boolean(opts.deviceCode));
+      if (tool === 'm365') return startMs365(Boolean(opts.work), Boolean(opts.deviceCode) || !d.ms365Browser);
       const ac = new AbortController();
       let showUrl!: (url: string) => void;
       const urlShown = new Promise<string>((r) => (showUrl = r));
@@ -147,6 +153,8 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
     },
 
     cancel,
+
+    canUseBrowser: (tool) => tool === 'jira' || Boolean(d.ms365Browser),
 
     async signOut(tool) {
       cancel(tool);

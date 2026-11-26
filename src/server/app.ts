@@ -121,6 +121,7 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     connections,
     rovo: (o) => connectRovo(true, o),
     ms365: ({ work, deviceCode }) => connectMs365(root, ms365Env(work), { deviceCode }),
+    ms365Browser: Boolean(env.M365_CLIENT_ID),
     remember: (tool, settings) => {
       if (tool === 'jira') {
         if (!settings) fs.rmSync(rovoStore, { force: true }); // signing out of Jira forgets its tokens

@@ -79,7 +79,7 @@ describe('createConnect: Jira Cloud', () => {
 });
 
 describe('createConnect: Microsoft 365', () => {
-  const setup = (state: FakeMs365State) => {
+  const setup = (state: FakeMs365State, ms365Browser = true) => {
     const connections: Connection[] = [];
     const asked: { work: boolean; deviceCode: boolean }[] = [];
     const hooks = createConnect({
@@ -87,6 +87,7 @@ describe('createConnect: Microsoft 365', () => {
       rovo: () => Promise.reject(new Error('not used')),
       ms365: (o) => (asked.push(o), ms365Connection(state, o.work)),
       pollMs: 5,
+      ms365Browser,
     });
     return { connections, asked, hooks };
   };
@@ -111,6 +112,15 @@ describe('createConnect: Microsoft 365', () => {
     enterCode(state);
     expect(await finished).toBe('Microsoft 365 as priya@contoso.example');
     expect(connections).toHaveLength(1);
+  });
+
+  it("uses a code without our own app registration, because the ready-made app rejects the browser's return address", async () => {
+    const { asked, hooks } = setup({ signedIn: false, login: 'code' }, false);
+    expect(await hooks.start('m365', { work: false })).toEqual({ how: 'code', url: 'https://microsoft.com/devicelogin', code: 'FAKE12345' });
+    expect(asked).toEqual([{ work: false, deviceCode: true }]);
+    expect(hooks.canUseBrowser!('m365')).toBe(false);
+    expect(hooks.canUseBrowser!('jira')).toBe(true);
+    hooks.cancel('m365');
   });
 
   it('needs no sign-in when the saved one still works', async () => {
