@@ -6,6 +6,8 @@ export interface LlmCall {
   effort?: 'low' | 'medium' | 'high';
   /** Overrides the gateway's default timeout for this call (thinking takes longer than extraction). */
   timeoutMs?: number;
+  /** Images for the model to look at, as data URLs (data:image/jpeg;base64,...). */
+  images?: string[];
 }
 
 export interface LlmGateway {
@@ -25,7 +27,7 @@ export interface OpenAiCompatConfig {
 export class OpenAiCompatGateway implements LlmGateway {
   constructor(private cfg: OpenAiCompatConfig) {}
 
-  async extractJson({ system, user, effort, timeoutMs }: LlmCall): Promise<unknown> {
+  async extractJson({ system, user, effort, timeoutMs, images }: LlmCall): Promise<unknown> {
     const res = await (this.cfg.fetchFn ?? fetch)(`${this.cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       signal: AbortSignal.timeout(timeoutMs ?? this.cfg.timeoutMs ?? 20_000),
@@ -40,7 +42,12 @@ export class OpenAiCompatGateway implements LlmGateway {
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: user },
+          {
+            role: 'user',
+            content: images?.length
+              ? [{ type: 'text', text: user }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))]
+              : user,
+          },
         ],
       }),
     });

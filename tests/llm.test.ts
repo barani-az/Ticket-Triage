@@ -77,3 +77,21 @@ describe('LLM gateway', () => {
     expect(u.fields.priority.value).toBe('High');
   });
 });
+
+describe('images', () => {
+  it('sends images as image_url parts next to the text, and plain text when there are none', async () => {
+    const bodies: any[] = [];
+    const fetchFn = (async (_u: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }));
+    }) as unknown as typeof fetch;
+    const gw = new OpenAiCompatGateway({ baseUrl: 'http://x', model: 'm', fetchFn });
+    await gw.extractJson({ system: 's', user: 'look', images: ['data:image/jpeg;base64,AAA'] });
+    await gw.extractJson({ system: 's', user: 'plain' });
+    expect(bodies[0].messages[1].content).toEqual([
+      { type: 'text', text: 'look' },
+      { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAA' } },
+    ]);
+    expect(bodies[1].messages[1].content).toBe('plain');
+  });
+});

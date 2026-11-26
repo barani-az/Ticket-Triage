@@ -56,6 +56,8 @@ The rule to approve is: the app sends only this, and anything more needs a new d
 | The LLM | The names of the connected tools, up to 12 project keys and names per connection, and today's date | `session.ts`, `context` |
 | The LLM | Keys and summaries of the last 5 tickets created, taken from the audit log | `session.ts`, `context` |
 | The LLM | An email or Teams chat the user picks to make a ticket from: its sender, subject or chat name, and up to 6,000 characters of text, quoted as data the model must not take orders from | `session.ts`, `fromSource` |
+| The LLM | **New, needs sign-off:** while a draft is being discussed, its project, issue type, summary, description and priority (never the assignee or component), and the question the app is asking | `session.ts`, `submit` |
+| The LLM | **New, needs sign-off:** a screenshot, only when the user presses **Take a screenshot** (or pastes or drops an image) and then sends it. The image is not redacted, so anything visible in it is sent | `main.ts`, `captureScreen`; `session.ts` |
 | Jira or Rovo | Only the values on the confirmation card. With auto-create on, the complete, validated draft is sent instead. | `executor.ts` |
 | Microsoft 365 | Only the values on the card (recipient, subject, full message text, time), after the user confirms. Auto-create never applies. | `ms365.ts` |
 

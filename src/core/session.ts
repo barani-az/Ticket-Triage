@@ -1,4 +1,14 @@
-import { actionUnderstanding, type Advice, advise, type AdvisorContext, type SourceRequest, type TicketProposal, toUnderstanding, type Turn } from './advisor.js';
+import {
+  actionUnderstanding,
+  type Advice,
+  advise,
+  type AdvisorContext,
+  type DraftContext,
+  type SourceRequest,
+  type TicketProposal,
+  toUnderstanding,
+  type Turn,
+} from './advisor.js';
 import type { Connection, SourceContent } from './connectors/contract.js';
 import { type AuditLog, buildPlan, executePlan, type Plan } from './executor.js';
 import type { LlmGateway } from './llm.js';
@@ -9,18 +19,27 @@ import type { Candidate, ConfirmationCard, Fields, Question, Understanding } fro
 import { understand } from './understand.js';
 
 export type UiToCore =
-  | { type: 'submit'; text: string }
+  | { type: 'submit'; text: string; images?: string[] }
   | { type: 'answer'; choiceId?: string; text?: string }
   | { type: 'stop' }
   | { type: 'confirm' }
   | { type: 'cancel' }
   | { type: 'fallback'; option: 'answer-one' | 'save-draft' }
   /** Sent by the window right after a sign-in card: resolves when the user has finished signing in. */
-  | { type: 'wait' };
+  | { type: 'wait' }
+  /** Start a fresh conversation: forget the draft and what was said. */
+  | { type: 'new' };
+
+// Words that confirm or drop a draft. Matched by rule, never by the model, so the AI cannot trigger a write.
+const YES = /^\s*(yes( please)?|yep|yeah|ok(ay)?|sure|create( it| the ticket)?|confirm|go ahead|do it|submit|looks good|lgtm)[\s.!]*$/i;
+const CANCEL = /^\s*(cancel( it)?|discard( it)?|never ?mind|drop it|forget it|don'?t create( it)?)[\s.!]*$/i;
+const NO = /^\s*(no|nope)[\s.!]*$/i;
+
 
 export type CoreToUi =
   | { type: 'info'; text: string }
-  | { type: 'assistant'; text: string; reasoning?: string; suggestions?: string[] }
+  /** `action: 'screenshot'` means the assistant is asking permission to look at the user's screen. */
+  | { type: 'assistant'; text: string; reasoning?: string; suggestions?: string[]; action?: 'screenshot' }
   | { type: 'question'; question: Question }
   | { type: 'draft'; connection: string; rows: { field: string; value: string; assumed: boolean }[] }
   | { type: 'card'; card: ConfirmationCard; canConfirm: boolean; unresolved: string[]; options: string[]; errors: string[] }
@@ -110,8 +129,16 @@ export class Session {
   private projects?: { at: number; list: string[] };
   /** The email or chat the last ticket was drafted from, so "reply to them" has a target. */
   private lastSource?: SourceContent;
+  private lastQuestion?: Question;
+  private lastCard?: CoreToUi;
+  /** True while a draft came out of a conversation: then it is never created without the user saying so. */
+  private conversational = false;
 
   constructor(private deps: SessionDeps) {}
+
+  private get reasoning() {
+    return Boolean(this.deps.llm) && this.deps.advisor !== false;
+  }
 
   private m365() {
     return this.deps.connections.find((c) => c.connector.manifest.type === 'ms365');
@@ -156,11 +183,12 @@ export class Session {
   }
 
   /** Ask the reasoning layer. Returns undefined when there is no LLM or it fails, so the plain flow takes over. */
-  private async consult(text: string, source?: SourceContent): Promise<Advice | undefined> {
+  private async consult(text: string, images?: string[], draft?: DraftContext, source?: SourceContent): Promise<Advice | undefined> {
     if (!this.deps.llm || this.deps.advisor === false) return undefined;
-    const advice = await advise(this.history, text, await this.context(), this.deps.llm, source);
+    const advice = await advise(this.history, text, await this.context(), this.deps.llm, images, draft, source);
     if (advice) {
-      this.history.push({ role: 'user', text }, { role: 'assistant', text: advice.reply });
+      // Images are not kept in the history (too big); a marker tells the model one was sent.
+      this.history.push({ role: 'user', text: images?.length ? `${text} [screenshot attached]` : text }, { role: 'assistant', text: advice.reply });
       this.history = this.history.slice(-10);
     }
     return advice;
@@ -170,7 +198,7 @@ export class Session {
     try {
       switch (msg.type) {
         case 'submit':
-          return await this.submit(msg.text);
+          return await this.submit(msg.text, msg.images);
         case 'answer':
           return await this.answer(msg);
         case 'stop':
@@ -180,37 +208,109 @@ export class Session {
         case 'cancel':
           if (this.state.kind === 'signing-in') this.deps.connect?.cancel(this.state.tool);
           this.state = { kind: 'idle' };
+          this.conversational = false;
           return [{ type: 'info', text: 'Cancelled. Nothing was changed.' }];
         case 'wait':
           return await this.finishSignIn();
         case 'fallback':
           return await this.fallback(msg.option);
+        case 'new':
+          this.state = { kind: 'idle' };
+          this.history = [];
+          this.conversational = false;
+          return [];
       }
     } catch (e) {
       return [{ type: 'error', message: (e as Error).message }];
     }
   }
 
-  private async submit(text: string): Promise<CoreToUi[]> {
+  /** The question or card that is still waiting, so it can be shown again under a chat reply. */
+  private repeatPrompt(): CoreToUi[] {
+    if (this.state.kind === 'asking' && this.lastQuestion) return [{ type: 'question', question: this.lastQuestion }];
+    if (this.state.kind === 'confirming' && this.lastCard) return [this.lastCard];
+    return [];
+  }
+
+  private drop(): CoreToUi[] {
+    this.state = { kind: 'idle' };
+    this.conversational = false;
+    this.history.push({ role: 'assistant', text: 'The draft was discarded. Nothing was created.' });
+    return [{ type: 'assistant', text: 'Okay, I dropped that draft. Nothing was created.' }];
+  }
+
+  /** A change to a draft keeps everything already settled and applies only what the model returned. */
+  private revise(fields: Fields, proposed: Understanding, said: string): Understanding {
+    const merged: Understanding['fields'] = {};
+    for (const [key, v] of Object.entries(fields)) merged[key] = { value: v.label, confidence: 0.95 };
+    for (const [key, hint] of Object.entries(proposed.fields)) {
+      // The project only moves when the user names a new one; the model re-guessing it does not.
+      if (key === 'project' && merged.project && hint.confidence < 0.7) continue;
+      merged[key] = hint;
+    }
+    return { operation: 'create', fields: merged };
+  }
+
+  private async submit(text: string, images?: string[]): Promise<CoreToUi[]> {
     // Commands are handled here and never reach the LLM.
     const command = text.trim().match(/^\/(\w+)/)?.[1]?.toLowerCase();
     if (command) return command === 'connect' ? this.connectMenu() : [{ type: 'info', text: `Unknown command /${command}. Try /connect.` }];
-    const advice = await this.consult(text);
+    const live = this.state.kind === 'asking' || this.state.kind === 'confirming' ? this.state : undefined;
+    if (live && !images?.length) {
+      if (CANCEL.test(text) || (live.kind === 'confirming' && NO.test(text))) return this.drop();
+      if (live.kind === 'confirming' && YES.test(text)) return this.confirm();
+    }
+    const draft: DraftContext | undefined =
+      live && this.reasoning
+        ? {
+            connection: live.conn.name,
+            // People and components are never sent to the model (docs/decisions.md, decision 3). They are kept
+            // in the draft by revise(), so the model does not need to see them to leave them unchanged.
+            fields: Object.entries(live.qn.fields)
+              .filter(([k]) => k !== 'assignee' && k !== 'components')
+              .map(([k, v]) => `${k}: ${v.label}`),
+            question: live.kind === 'asking' ? this.lastQuestion?.text : undefined,
+          }
+        : undefined;
+    const advice = await this.consult(text, images, draft);
     if (advice) {
-      const said: CoreToUi = { type: 'assistant', text: advice.reply, reasoning: advice.reasoning, suggestions: advice.suggestions };
+      const said: CoreToUi = {
+        type: 'assistant',
+        text: advice.reply,
+        reasoning: advice.reasoning,
+        suggestions: advice.suggestions,
+        // Ask for permission only once: with an image already attached there is nothing more to capture.
+        ...(advice.intent === 'screenshot' && !images?.length ? { action: 'screenshot' as const } : {}),
+      };
       if (advice.intent === 'action' && advice.action) {
         const conn = this.m365();
-        if (!conn) return [said, { type: 'info', text: 'Microsoft 365 is not connected. Set M365=1 in .env and run npm run m365:login.' }];
-        return [said, ...(await this.startFlow(text, conn, actionUnderstanding(advice.action)))];
+        if (!conn) return [said, { type: 'info', text: 'Microsoft 365 is not connected. Type /connect to connect it.' }];
+        this.conversational = true;
+        const proposed = actionUnderstanding(advice.action);
+        // Changing a message being drafted keeps what was settled, like a ticket draft.
+        if (live && live.conn === conn) return [said, ...(await this.startFlow(live.request, conn, this.revise(live.qn.fields, proposed, text)))];
+        return [said, ...(await this.startFlow(text, conn, proposed))];
       }
       if (advice.intent === 'ticket' && advice.from) return [said, ...(await this.askSource(text, advice.from))];
       if (advice.intent !== 'ticket' || !advice.ticket) {
+        // Chatting about a draft leaves it where it was.
+        if (live) return [said, ...this.repeatPrompt()];
         this.state = { kind: 'idle' };
         return [said];
       }
       // A proposed ticket goes through the same checks as any request: routing, lookups, the questionnaire.
-      return [said, ...(await this.toTicketTool(text, toUnderstanding(advice.ticket, text)))];
+      this.conversational = true;
+      const proposed = toUnderstanding(advice.ticket, text);
+      if (live) return [said, ...(await this.startFlow(live.request, live.conn, this.revise(live.qn.fields, proposed, text)))];
+      return [said, ...(await this.toTicketTool(text, proposed))];
     }
+    if (live && this.reasoning) {
+      return [
+        { type: 'assistant', text: 'I could not work that out just now. Use the choices or buttons, or say "create it" or "cancel".' },
+        ...this.repeatPrompt(),
+      ];
+    }
+    this.conversational = false;
     const understanding = await understand(text, this.deps.llm);
     if (understanding.operation === 'read') {
       return [{ type: 'info', text: 'Reads are not part of this demo. Try "create a bug for ...".' }];
@@ -255,9 +355,10 @@ export class Session {
     const content = await conn.connector.read!(kind, id);
     this.lastSource = content;
     const out: CoreToUi[] = [];
-    const advice = await this.consult(`Draft a ticket from this ${kind}.`, content);
+    const advice = await this.consult(`Draft a ticket from this ${kind}.`, undefined, undefined, content);
     let proposal: TicketProposal;
     if (advice?.intent === 'ticket' && advice.ticket) {
+      this.conversational = true;
       out.push({ type: 'assistant', text: advice.reply, reasoning: advice.reasoning, suggestions: advice.suggestions });
       proposal = advice.ticket;
     } else {
@@ -269,7 +370,13 @@ export class Session {
     return [...out, ...(await this.toTicketTool(request, toUnderstanding(proposal, request), content))];
   }
 
-  private async startFlow(request: string, conn: Connection, understanding: Understanding, source?: SourceContent): Promise<CoreToUi[]> {
+  /** `source` defaults to the open draft's, so revising a ticket made from an email keeps its link to that email. */
+  private async startFlow(
+    request: string,
+    conn: Connection,
+    understanding: Understanding,
+    source = this.state.kind === 'asking' || this.state.kind === 'confirming' ? this.state.source : undefined,
+  ): Promise<CoreToUi[]> {
     if (conn.connector.manifest.type === 'ms365') this.aimAtSource(understanding);
     const qn = new Questionnaire(conn, understanding, this.deps.profile ?? 'guided', this.deps.prefs ?? {});
     this.state = { kind: 'asking', request, conn, qn, source };
@@ -295,6 +402,7 @@ export class Session {
     const next = await s.qn.next();
     const out: CoreToUi[] = [this.draftMessage(s.conn, s.qn)];
     if (next === 'done') return [...out, ...(await this.toCard(s.request, s.conn, s.qn, await s.qn.unresolved(), s.source))];
+    this.lastQuestion = next;
     return [...out, { type: 'question', question: next }];
   }
 
@@ -334,7 +442,20 @@ export class Session {
       const conn = this.deps.connections.find((c) => c.id === chosen.id)!;
       return this.startFlow(s.request, conn, s.understanding, s.source);
     }
-    if (s.kind !== 'asking') return [{ type: 'info', text: 'Start with a request, e.g. "create a bug for the login page crashing".' }];
+    if (s.kind !== 'asking') {
+      if (msg.text) return this.submit(msg.text);
+      return [{ type: 'info', text: 'Start with a request, e.g. "create a bug for the login page crashing".' }];
+    }
+    const q = this.lastQuestion;
+    if (msg.text && !msg.choiceId) {
+      if (CANCEL.test(msg.text)) return this.drop();
+      // "yes" to "I took X. Correct?" picks X; anything that is not one of the choices is conversation.
+      if (q?.source === 6 && YES.test(msg.text) && q.choices[0]) {
+        await s.qn.answer({ choiceId: q.choices[0].id });
+        return this.advance();
+      }
+      if (this.reasoning && q && q.choices.length && matchAnswer(msg.text, q.choices).kind === 'none') return this.submit(msg.text);
+    }
     await s.qn.answer(msg);
     return this.advance();
   }
@@ -351,21 +472,20 @@ export class Session {
     const plan = buildPlan(conn, qn.fields, schema);
     this.state = { kind: 'confirming', request, conn, qn, plan, unresolved, source };
     const ready = unresolved.length === 0 && plan.errors.length === 0 && !conn.readOnly;
-    if (ready && !conn.connector.manifest.confirmAlways && this.deps.autoCreate?.()) {
+    if (ready && !this.conversational && !conn.connector.manifest.confirmAlways && this.deps.autoCreate?.()) {
       const summary = plan.card.rows.map((r) => `${r.title}: ${r.value}`).join(' · ');
       return [{ type: 'info', text: `Creating on ${conn.name}: ${summary}` }, ...(await this.confirm())];
     }
     const titles = unresolved.map((k) => String(schema.properties?.[k]?.title ?? k));
-    return [
-      {
-        type: 'card',
-        card: plan.card,
-        canConfirm: ready,
-        unresolved: titles,
-        options: unresolved.length ? ['answer-one', 'save-draft'] : [],
-        errors: plan.errors,
-      },
-    ];
+    this.lastCard = {
+      type: 'card',
+      card: plan.card,
+      canConfirm: unresolved.length === 0 && plan.errors.length === 0 && !conn.readOnly,
+      unresolved: titles,
+      options: unresolved.length ? ['answer-one', 'save-draft'] : [],
+      errors: plan.errors,
+    };
+    return [this.lastCard];
   }
 
   private async confirm(): Promise<CoreToUi[]> {
@@ -374,8 +494,11 @@ export class Session {
     if (s.unresolved.length) return [{ type: 'error', message: 'Required values are missing, so this cannot be sent.' }];
     const result = await executePlan(s.conn, s.plan, s.request, this.deps.audit);
     this.state = { kind: 'idle' };
+    this.conversational = false;
     if (!result.ok) return [{ type: 'result', ok: false, text: result.error }];
     const ticket = s.conn.connector.manifest.type !== 'ms365';
+    // Remember what was made, so "add a comment to that one" has something to refer to.
+    if (result.ok) this.history.push({ role: 'assistant', text: `Created ${result.id}: ${s.plan.step.params.summary ?? ''}` });
     return [
       {
         type: 'result',

@@ -164,8 +164,37 @@ function buildTray() {
   refresh();
 }
 
+/**
+ * One screenshot of the display the window is on, as a JPEG data URL no wider than 1600px. Only the
+ * "Take a screenshot" button calls this, after the assistant has asked and the user has said yes.
+ * Nothing is written to disk; the image lives in memory until it is sent or discarded.
+ */
+async function captureScreen(): Promise<string | null> {
+  if (!win) return null;
+  const display = screen.getDisplayMatching(win.getBounds());
+  const wasVisible = win.isVisible();
+  win.hide(); // the assistant must not appear in its own screenshot
+  await new Promise((r) => setTimeout(r, 300)); // let the screen repaint without the window
+  try {
+    const f = display.scaleFactor;
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: Math.round(display.size.width * f), height: Math.round(display.size.height * f) },
+    });
+    const src = sources.find((s) => s.display_id === String(display.id)) ?? sources[0];
+    if (!src) return null;
+    const img = src.thumbnail.getSize().width > 1600 ? src.thumbnail.resize({ width: 1600, quality: 'good' }) : src.thumbnail;
+    return `data:image/jpeg;base64,${img.toJPEG(80).toString('base64')}`;
+  } catch {
+    return null;
+  } finally {
+    if (wasVisible) showWindow();
+  }
+}
+
 function wireIpc() {
-  const allowed = new Set(['submit', 'answer', 'stop', 'confirm', 'cancel', 'fallback', 'wait']);
+  ipcMain.handle('assistant:capture', () => captureScreen());
+  const allowed = new Set(['submit', 'answer', 'stop', 'confirm', 'cancel', 'fallback', 'new', 'wait']);
   ipcMain.handle('assistant:message', async (_e, msg: UiToCore) => {
     if (!msg || typeof msg !== 'object' || !allowed.has(msg.type)) return [{ type: 'error', message: 'Unknown message.' }];
     const out = await core!.session.handle(msg);
@@ -267,6 +296,28 @@ async function smokeTest() {
 
   await run(`reset(); shell.classList.remove('busy'); document.getElementById('input').value = ''; render({ type: 'assistant', text: 'I drafted a bug ticket for the Safari login crashes, set to High priority because customers are affected. The draft is below.', reasoning: 'Customers are blocked from logging in, which makes it a high-priority bug.', suggestions: ['Add Safari version details', 'Assign to the frontend team'] })`);
   await shot('8-assistant');
+
+  // The screenshot flow: the permission question, then the chip. Drawn from fixed messages; nothing is captured.
+  await run(`reset(); render({ type: 'assistant', text: 'Can I take a screenshot of your screen to see the error?', action: 'screenshot' })`);
+  await shot('9-ask-screenshot');
+  await run(`reset(); (() => { const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="88" height="52"><rect width="88" height="52" fill="#f3f4f6"/><rect width="88" height="7" fill="#1f2937"/><rect x="10" y="16" width="52" height="7" fill="#b91c1c"/><rect x="10" y="28" width="66" height="5" fill="#d1d5db"/><rect x="10" y="38" width="40" height="8" fill="#fecaca"/></svg>'; setImages(['data:image/svg+xml,' + encodeURIComponent(svg)]); document.getElementById('input').value = 'there is an error on this page'; hint(); add(el('div', { class: 'meta', text: 'Screenshot added. It goes to Gemini only when you press Enter. Add a note first if you like, or remove it with the x.' })); })()`);
+  await shot('10-attached');
+
+  // History: through the typed command, so the real key handling is exercised.
+  await run(`reset(); setImages([]); (() => { const i = document.getElementById('input'); i.value = 'history'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+  await wait(900);
+  out.history = { window: win!.getContentSize(), rows: await run(`document.querySelectorAll('#out .opt').length`), open: await run('histOpen') };
+  await shot('11-history');
+
+  // A conversation thread, drawn from fixed messages (no model, no writes).
+  await run(`reset(); (() => {
+    echo('there is an error on this page');
+    render({ type: 'assistant', text: 'I drafted a High priority bug: checkout payment fails with a 500 error (ERR-7731). What payment method were you using?' });
+    echo('make it highest priority');
+    render({ type: 'assistant', text: 'Done, it is now Highest priority.' });
+    render({ type: 'card', canConfirm: true, unresolved: [], options: [], errors: [], card: { title: 'Create issue', connectionName: 'Company Jira', rows: [{ field: 'project', title: 'Project', value: 'Website', assumed: false }, { field: 'summary', title: 'Summary', value: '500 error on payment page (ERR-7731)', assumed: false }, { field: 'priority', title: 'Priority', value: 'Highest', assumed: false }], warnings: [] } });
+  })()`);
+  await shot('12-chat');
   console.log('SMOKE ' + JSON.stringify(out, null, 2));
 }
 
