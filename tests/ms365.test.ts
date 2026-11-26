@@ -248,12 +248,32 @@ describe('Microsoft 365 in the conversation', () => {
     expect(fake.calls.at(-1)).toMatchObject({ name: 'send-chat-message', args: { chatId: 'chat-1', confirm: true } });
   });
 
-  it('says so when a personal account is asked to read Teams chats', async () => {
-    const { conn } = await m365(false);
-    const { gw } = scripted([{ intent: 'ticket', reply: 'Which chat?', suggestions: [], from: { kind: 'chat', query: '' } }]);
+  it("explains plainly, instead of the model's plan, when a personal account asks for Teams", async () => {
+    const { conn, fake } = await m365(false);
+    const { gw } = scripted([
+      { intent: 'ticket', reply: "I'll search your Teams chats. Select the correct chat below.", suggestions: [], from: { kind: 'chat', query: 'release' } },
+      { intent: 'action', reply: 'Posting it now.', suggestions: [], action: { kind: 'channel', fields: { message: 'hi' } } },
+    ]);
     const session = new Session({ connections: [jira, conn], audit: newAudit(), llm: gw });
-    const msgs = await session.handle({ type: 'submit', text: 'log the bug from the release chat' });
-    expect(msgs).toContainEqual({ type: 'info', text: 'Teams chats need a work or school account.' });
+    let msgs = await session.handle({ type: 'submit', text: 'look at my teams chat about the release and create an issue from it' });
+    expect(msgs).toHaveLength(1); // the model's "select the chat below" is not shown
+    expect(msgs[0]).toMatchObject({ type: 'assistant', text: expect.stringContaining("can't read Teams chats with a personal Microsoft account"), suggestions: ['Make a ticket from an email instead', '/connect'] });
+    msgs = await session.handle({ type: 'submit', text: 'post it in the web channel' });
+    expect(msgs).toEqual([expect.objectContaining({ type: 'assistant', text: expect.stringContaining("can't send Teams messages") })]);
+    expect(fake.calls.filter((c) => c.name !== 'verify-login')).toEqual([]); // nothing was asked of Microsoft
+  });
+
+  it('says when nothing matches, or Microsoft 365 is not connected, without the model promising a list', async () => {
+    const { conn } = await m365(true);
+    const { gw } = scripted([{ intent: 'ticket', reply: 'Select the email below.', suggestions: [], from: { kind: 'email', query: 'invoice' } }]);
+    const session = new Session({ connections: [jira, conn], audit: newAudit(), llm: gw });
+    expect(await session.handle({ type: 'submit', text: 'ticket from the invoice email' })).toEqual([
+      { type: 'assistant', text: `I couldn't find any emails matching "invoice". Try again with the sender's name or a word from the subject.` },
+    ]);
+    const offline = new Session({ connections: [jira], audit: newAudit(), llm: gw });
+    expect(await offline.handle({ type: 'submit', text: 'ticket from the invoice email' })).toEqual([
+      { type: 'assistant', text: "Microsoft 365 isn't connected yet. Run /connect to sign in, then ask again.", suggestions: ['/connect'] },
+    ]);
   });
 
   it('without an LLM, an email request still reaches Microsoft 365 and asks only for what is missing', async () => {

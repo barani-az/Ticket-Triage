@@ -82,6 +82,23 @@ const SERVICE: Record<ConnectTool, { name: string; owner: string }> = {
   jira: { name: 'Jira Cloud', owner: 'Atlassian' },
 };
 
+// When Microsoft 365 can't do what was asked, these replace the model's reply, with a next step to click.
+const NOT_CONNECTED: CoreToUi = {
+  type: 'assistant',
+  text: "Microsoft 365 isn't connected yet. Run /connect to sign in, then ask again.",
+  suggestions: ['/connect'],
+};
+const CHATS_NEED_WORK_ACCOUNT: CoreToUi = {
+  type: 'assistant',
+  text: "I can't read Teams chats with a personal Microsoft account: Microsoft only allows that for work or school accounts. I can make the ticket from an email instead, or you can describe the problem here. To use Teams, run /connect and sign in with a work or school account.",
+  suggestions: ['Make a ticket from an email instead', '/connect'],
+};
+const TEAMS_NEEDS_WORK_ACCOUNT: CoreToUi = {
+  type: 'assistant',
+  text: "I can't send Teams messages with a personal Microsoft account: Microsoft only allows that for work or school accounts. I can send it as an email instead, or run /connect to sign in with a work or school account.",
+  suggestions: ['Send it as an email instead', '/connect'],
+};
+
 /** Sign-in errors in plain words. The raw codes (AADSTS…) mean nothing to most people. */
 export function signInError(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e);
@@ -303,14 +320,16 @@ export class Session {
       };
       if (advice.intent === 'action' && advice.action) {
         const conn = this.m365();
-        if (!conn) return [said, { type: 'info', text: 'Microsoft 365 is not connected. Type /connect to connect it.' }];
+        if (!conn) return [NOT_CONNECTED];
+        // The model may plan a Teams message that this account can't send: say so instead of its plan.
+        if (!this.m365Actions().includes(advice.action.kind)) return [TEAMS_NEEDS_WORK_ACCOUNT];
         this.conversational = true;
         const proposed = actionUnderstanding(advice.action);
         // Changing a message being drafted keeps what was settled, like a ticket draft.
         if (live && live.conn === conn) return [said, ...(await this.startFlow(live.request, conn, this.revise(live.qn.fields, proposed, text)))];
         return [said, ...(await this.startFlow(text, conn, proposed))];
       }
-      if (advice.intent === 'ticket' && advice.from) return [said, ...(await this.askSource(text, advice.from))];
+      if (advice.intent === 'ticket' && advice.from) return this.askSource(text, advice.from, said);
       if (advice.intent !== 'ticket' || !advice.ticket) {
         // Chatting about a draft leaves it where it was.
         if (live) return [said, ...this.repeatPrompt()];
@@ -358,15 +377,22 @@ export class Session {
   }
 
   /** "Make a ticket from Priya's email": list the matching emails or chats to pick from. */
-  private async askSource(request: string, from: SourceRequest): Promise<CoreToUi[]> {
+  /**
+   * The model's reply ("select the chat below") is shown only when there is a list to pick from. When there
+   * is not, a plain explanation with a next step replaces it, so the window never promises what can't happen.
+   */
+  private async askSource(request: string, from: SourceRequest, said?: CoreToUi): Promise<CoreToUi[]> {
     const conn = this.m365();
     const noun = from.kind === 'email' ? 'emails' : 'chats';
-    if (!conn) return [{ type: 'info', text: `Connect Microsoft 365 to make tickets from ${noun}.` }];
-    if (!this.m365Actions().includes(from.kind)) return [{ type: 'info', text: 'Teams chats need a work or school account.' }];
+    if (!conn) return [NOT_CONNECTED];
+    if (!this.m365Actions().includes(from.kind)) return [CHATS_NEED_WORK_ACCOUNT];
     const candidates = (await conn.connector.lookup(from.kind, from.query)).slice(0, 8);
-    if (!candidates.length) return [{ type: 'info', text: `No ${noun} match "${from.query}". Try other words.` }];
+    if (!candidates.length) {
+      const words = from.kind === 'email' ? "the sender's name or a word from the subject" : "a person's name or the chat's topic";
+      return [{ type: 'assistant', text: `I couldn't find any ${noun} matching "${from.query}". Try again with ${words}.` }];
+    }
     this.state = { kind: 'source', request, from: from.kind, conn, candidates };
-    return [this.pickQuestion('source', '__source', from.kind === 'email' ? 'Which email?' : 'Which chat?', candidates)];
+    return [...(said ? [said] : []), this.pickQuestion('source', '__source', from.kind === 'email' ? 'Which email?' : 'Which chat?', candidates)];
   }
 
   /** Read the picked email or chat, draft a ticket from it, and continue to the ticket tool. */
