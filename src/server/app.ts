@@ -8,6 +8,7 @@ import { McpConnector } from '../core/connectors/mcp.js';
 import { ROVO_URL, RovoJiraConnector } from '../core/connectors/rovo.js';
 import { AuditLog } from '../core/executor.js';
 import { gatewayFromEnv } from '../core/llm.js';
+import { configureLog, log } from '../core/log.js';
 import { Session } from '../core/session.js';
 import { connectMs365, followMs365Log } from '../mcp/ms365Server.js';
 import { createConnect } from './connect.js';
@@ -32,6 +33,8 @@ export type App = Awaited<ReturnType<typeof createApp>>;
  * and Atlassian's live Rovo connection when a saved sign-in exists. ROVO_ONLY=1 drops the mocks.
  */
 export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
+  configureLog(env.LOG);
+  log('app', `starting (data in ${opts.dataDir})`);
   const connections: Connection[] = [];
   let baseUrl = env.JIRA_BASE_URL ?? '';
   let closeMock: (() => Promise<void>) | undefined;
@@ -105,16 +108,15 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   // A personal account needs the "consumers" authority, or its sign-in stops working after about an hour.
   const ms365Env = (work: boolean) => ({ ...env, M365_WORK: work ? '1' : '0', M365_TENANT_ID: env.M365_TENANT_ID ?? (work ? undefined : 'consumers') });
 
-  // Sign-in steps and the Microsoft 365 server's own log go to the terminal. M365_LOGS=0 turns this off.
-  const quiet = env.M365_LOGS === '0';
-  const say = (tag: string) => (line: string) => quiet || console.log(`[${tag}] ${line}`);
-  const stopLog = quiet ? undefined : followMs365Log(say('ms365'));
+  // The Microsoft 365 server can only log to a file, so its lines are followed into this log.
+  const say = (tag: string) => (line: string) => log(tag, line);
+  const stopLog = env.LOG === '0' || env.LOG === 'off' ? undefined : followMs365Log(say('ms365-server'));
 
   let m365Error: string | undefined;
   if (env.M365 === '1' || saved.m365) {
     try {
       const work = env.M365_WORK !== undefined ? env.M365_WORK === '1' : Boolean(saved.m365?.work);
-      connections.push(await connectMs365(root, ms365Env(work), { log: say('ms365') }));
+      connections.push(await connectMs365(root, ms365Env(work), { log: say('ms365-server') }));
     } catch (e) {
       m365Error = (e as Error).message;
     }
@@ -125,7 +127,7 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   const connect = createConnect({
     connections,
     rovo: (o) => connectRovo(true, o),
-    ms365: ({ work, deviceCode }) => connectMs365(root, ms365Env(work), { deviceCode, log: say('ms365') }),
+    ms365: ({ work, deviceCode }) => connectMs365(root, ms365Env(work), { deviceCode, log: say('ms365-server') }),
     log: say('connect'),
     ms365Browser: Boolean(env.M365_CLIENT_ID),
     remember: (tool, settings) => {
@@ -140,6 +142,9 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     },
   });
   const session = new Session({ connections, audit, llm, autoCreate: opts.autoCreate, connect });
+  log('app', `ready: connections ${connections.map((c) => `${c.name}${c.readOnly ? ' (read-only)' : ''}`).join(', ') || 'none'}; AI ${llm ? 'on' : 'off (built-in rules)'}`);
+  if (rovoError) log('app', `Atlassian Rovo not connected: ${rovoError}`);
+  if (m365Error) log('app', `Microsoft 365 not connected: ${m365Error}`);
 
   return {
     baseUrl: baseUrl || 'https://mcp.atlassian.com',

@@ -12,6 +12,7 @@ import {
 import type { Connection, SourceContent } from './connectors/contract.js';
 import { type AuditLog, buildPlan, executePlan, type Plan } from './executor.js';
 import type { LlmGateway } from './llm.js';
+import { clip, log } from './log.js';
 import { matchAnswer } from './matcher.js';
 import { Questionnaire, type Profile } from './questionnaire.js';
 import { route } from './router.js';
@@ -198,7 +199,17 @@ export class Session {
     return advice;
   }
 
+  /** Every message from the window and every reply, in the log. */
   async handle(msg: UiToCore): Promise<CoreToUi[]> {
+    const t0 = Date.now();
+    log('session', `← ${describeIn(msg)}`);
+    const out = await this.dispatch(msg);
+    for (const m of out) log('session', `→ ${describeOut(m)}`);
+    log('session', `  (${Date.now() - t0} ms, now ${this.state.kind})`);
+    return out;
+  }
+
+  private async dispatch(msg: UiToCore): Promise<CoreToUi[]> {
     try {
       switch (msg.type) {
         case 'submit':
@@ -660,5 +671,39 @@ export class Session {
     const question = await s.qn.reopen(key);
     this.state = { kind: 'asking', request: s.request, conn: s.conn, qn: s.qn, source: s.source };
     return [{ type: 'question', question }];
+  }
+}
+
+function describeIn(m: UiToCore): string {
+  switch (m.type) {
+    case 'submit':
+      return `submit "${clip(m.text, 120)}"${m.images?.length ? ` + ${m.images.length} image(s)` : ''}`;
+    case 'answer':
+      return m.choiceId !== undefined ? `answer: choice ${m.choiceId}` : `answer: "${clip(m.text, 120)}"`;
+    case 'fallback':
+      return `fallback: ${m.option}`;
+    default:
+      return m.type;
+  }
+}
+
+function describeOut(m: CoreToUi): string {
+  switch (m.type) {
+    case 'info':
+      return `info: ${clip(m.text)}`;
+    case 'assistant':
+      return `assistant: ${clip(m.text)}${m.action ? ` [asks for a ${m.action}]` : ''}`;
+    case 'question':
+      return `question (${m.question.field}): ${clip(m.question.text, 100)} [${m.question.choices.length} choices]`;
+    case 'draft':
+      return `draft on ${m.connection}: ${m.rows.map((r) => `${r.field}=${clip(r.value, 40)}${r.assumed ? ' (assumed)' : ''}`).join(', ')}`;
+    case 'card':
+      return `card: ${m.card.title} ${m.canConfirm ? '(ready to confirm)' : '(cannot confirm)'}${m.unresolved.length ? ` missing: ${m.unresolved.join(', ')}` : ''}${m.errors.length ? ` errors: ${m.errors.join('; ')}` : ''}`;
+    case 'result':
+      return `result ${m.ok ? 'OK' : 'FAILED'}: ${m.stamp ? `${m.stamp} ` : ''}${clip(m.text)}${m.url ? ` ${m.url}` : ''}`;
+    case 'signin':
+      return `sign-in to ${m.service} by ${m.how}${m.code ? ` (code ${m.code})` : ''}${m.url ? ` at ${m.url}` : ''}`;
+    case 'error':
+      return `error: ${m.message}`;
   }
 }

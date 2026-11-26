@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, Tray } from 'electron';
+import { log } from '../core/log.js';
 import type { UiToCore } from '../core/session.js';
 import { createApp, type App } from '../server/app.js';
 import { recordDemo } from './demo.js';
@@ -88,7 +89,10 @@ function createWindow() {
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.on('blur', () => {
-    if (!SMOKE && win && !win.webContents.isDevToolsOpened()) win.hide();
+    if (!SMOKE && win && !win.webContents.isDevToolsOpened()) {
+      log('window', 'hidden (clicked elsewhere)');
+      win.hide();
+    }
   });
   return win;
 }
@@ -107,6 +111,7 @@ function placeWindow() {
 
 function showWindow() {
   if (!win) return;
+  log('window', 'shown');
   placeWindow();
   win.show();
   win.focus();
@@ -145,18 +150,20 @@ function buildTray() {
           checked: settings.autoCreate,
           click: (item) => {
             settings.autoCreate = item.checked;
+            log('tray', `Create tickets without asking: ${item.checked ? 'on' : 'off'}`);
             saveSettings();
           },
         },
         {
           label: 'Connect…',
           click: () => {
+            log('tray', 'Connect…');
             showWindow();
             void win?.webContents.executeJavaScript('window.runCommand && window.runCommand("/connect")');
           },
         },
         { type: 'separator' },
-        { label: 'Quit', click: () => app.quit() },
+        { label: 'Quit', click: () => (log('tray', 'Quit'), app.quit()) },
       ]),
     );
   };
@@ -171,6 +178,7 @@ function buildTray() {
  */
 async function captureScreen(): Promise<string | null> {
   if (!win) return null;
+  log('window', 'taking a screenshot (window hidden meanwhile)');
   const display = screen.getDisplayMatching(win.getBounds());
   const wasVisible = win.isVisible();
   win.hide(); // the assistant must not appear in its own screenshot
@@ -207,7 +215,7 @@ function wireIpc() {
   });
   ipcMain.handle('assistant:connections', () => core!.describe());
   ipcMain.handle('assistant:audit', () => core!.audit.list());
-  ipcMain.on('assistant:hide', () => win?.hide());
+  ipcMain.on('assistant:hide', () => (log('window', 'hidden (Esc)'), win?.hide()));
   // The page reports how tall it is; the window grows or shrinks to match, anchored at the top.
   ipcMain.on('assistant:resize', (_e, height: unknown) => {
     if (!win || DEMO || typeof height !== 'number' || !Number.isFinite(height)) return;

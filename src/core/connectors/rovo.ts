@@ -1,5 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Candidate, ExecResult, JsonSchema, PlanStep } from '../types.js';
+import { mcpFailure, timed } from '../log.js';
 import type { Connector } from './contract.js';
 
 /**
@@ -56,7 +57,7 @@ export class RovoJiraConnector implements Connector {
   constructor(private client: Client, private opts: { cloudId?: string } = {}) {}
 
   private async call(name: string, args: Record<string, unknown> = {}): Promise<any> {
-    const res = await this.client.callTool({ name, arguments: args });
+    const res = await timed('rovo', name, () => this.client.callTool({ name, arguments: args }), { args, failed: mcpFailure });
     const text = ((res.content as { type: string; text?: string }[]) ?? [])
       .filter((c) => c.type === 'text')
       .map((c) => c.text)

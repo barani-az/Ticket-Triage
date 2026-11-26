@@ -1,5 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Candidate, ExecResult, JsonSchema, PlanStep } from '../types.js';
+import { mcpFailure, timed } from '../log.js';
 import type { Connector, SourceContent } from './contract.js';
 
 /**
@@ -89,7 +90,7 @@ export class Ms365Connector implements Connector {
   }
 
   private async call(name: string, args: Record<string, unknown> = {}): Promise<any> {
-    const res = await this.client.callTool({ name, arguments: args });
+    const res = await timed('m365', name, () => this.client.callTool({ name, arguments: args }), { args, failed: mcpFailure });
     const text = Ms365Connector.text(res);
     let parsed: any = text;
     try {
@@ -109,7 +110,7 @@ export class Ms365Connector implements Connector {
    * the user is back; otherwise it returns the code to enter on Microsoft's page (the server keeps polling).
    */
   async login(timeoutMs: number): Promise<{ signedIn: string } | { url: string; code: string }> {
-    const res = await this.client.callTool({ name: 'login', arguments: {} }, undefined, { timeout: timeoutMs });
+    const res = await timed('m365', 'login', () => this.client.callTool({ name: 'login', arguments: {} }, undefined, { timeout: timeoutMs }), { failed: mcpFailure });
     const text = Ms365Connector.text(res);
     let r: any;
     try {

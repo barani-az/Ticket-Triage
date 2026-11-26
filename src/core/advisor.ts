@@ -1,4 +1,5 @@
 import type { LlmGateway } from './llm.js';
+import { clip, log } from './log.js';
 import type { HintedField, Understanding } from './types.js';
 
 /**
@@ -225,17 +226,33 @@ export async function advise(
   // Per model, and for all models together. A person is waiting; a screenshot takes longer to read.
   const limits = images?.length ? { timeoutMs: 20_000, budgetMs: 40_000 } : { timeoutMs: 10_000, budgetMs: 22_000 };
   try {
-    return parseAdvice(await llm.extractJson({ system: SYSTEM, user, images, effort: 'medium', ...limits }));
+    return decided(parseAdvice(await llm.extractJson({ system: SYSTEM, user, images, effort: 'medium', ...limits })));
   } catch (e) {
     // Retry only when the request itself was rejected (some models refuse the reasoning setting).
     // Repeating a timeout or an overload would just make the user wait twice.
-    if (!/\b400\b/.test((e as Error).message)) return undefined;
+    if (!/\b400\b/.test((e as Error).message)) return decided(undefined);
     try {
-      return parseAdvice(await llm.extractJson({ system: SYSTEM, user, images, ...limits }));
+      return decided(parseAdvice(await llm.extractJson({ system: SYSTEM, user, images, ...limits })));
     } catch {
-      return undefined;
+      return decided(undefined);
     }
   }
+}
+
+/** Log what the reasoning step decided. */
+function decided(a: Advice | undefined): Advice | undefined {
+  if (!a) log('ai', 'no usable answer from the model; the plain flow takes over');
+  else {
+    const what = a.ticket
+      ? ` ticket "${clip(a.ticket.summary, 80)}" (${a.ticket.issuetype ?? '?'}, ${a.ticket.priority ?? '?'}${a.ticket.project ? `, ${a.ticket.project}` : ''})`
+      : a.action
+        ? ` ${a.action.kind} with ${Object.keys(a.action.fields).join(', ') || 'no fields'}`
+        : a.from
+          ? ` from ${a.from.kind} matching "${a.from.query}"`
+          : '';
+    log('ai', `decided: ${a.intent}${what}${a.reasoning ? ` because ${clip(a.reasoning, 120)}` : ''}`);
+  }
+  return a;
 }
 
 /** Turn a ticket proposal into the hints the questionnaire validates against the tool's own data. */

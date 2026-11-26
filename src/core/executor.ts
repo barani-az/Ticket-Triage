@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Ajv } from 'ajv';
 import type { Connection } from './connectors/contract.js';
+import { log } from './log.js';
 import type { ConfirmationCard, ExecResult, Fields, JsonSchema, PlanStep } from './types.js';
 
 const ajv = new Ajv({ allErrors: true, strict: false });
@@ -100,5 +101,6 @@ export async function executePlan(
     }
   }
   audit.write({ at: new Date().toISOString(), connection: conn.name, request, step: plan.step, result });
+  log('write', `${conn.name}: ${result.ok ? `done ${result.stamp ? `${result.stamp} ` : ''}${result.id}${result.url ? ` ${result.url}` : ''}` : `NOT done: ${result.error}`}`);
   return result;
 }

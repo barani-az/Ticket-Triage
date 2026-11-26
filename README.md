@@ -121,6 +121,15 @@ components on a live site are still untested.
 The sign-in requested every Atlassian scope, including delete and manage. This demo never calls those
 tools, but a real build should request only read, write and search scopes.
 
+## Logs
+
+The terminal that runs the app (`npm run desktop` or `npm run web`) shows a timestamped line for every
+step: each message from the window and each reply (`[session]`), the AI's calls and decisions (`[llm]`,
+`[ai]`), every call to Jira, Rovo and Microsoft 365 with its timing (`[jira]`, `[rovo]`, `[m365]`), every
+write (`[write]`), sign-in steps (`[connect]`), the Microsoft 365 server's own log (`[ms365-server]`) and
+window events (`[window]`, `[tray]`). Set `LOG=debug` in `.env` to also see prompts, tool arguments and
+replies, or `LOG=0` to turn it off. Keys and tokens are never logged; screenshots only as a count.
+
 ## Connecting tools: /connect
 
 Type `/connect` in the window (or pick *Connect…* in the tray menu) and choose a tool. Each one
