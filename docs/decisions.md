@@ -54,6 +54,8 @@ The rule to approve is: the app sends only this, and anything more needs a new d
 | The LLM | The last 10 turns of the current session (what the user and the assistant said) | `session.ts`, `consult` |
 | The LLM | The names of the connected tools, up to 12 project keys and names per connection, and today's date | `session.ts`, `context` |
 | The LLM | Keys and summaries of the last 5 tickets created, taken from the audit log | `session.ts`, `context` |
+| The LLM | **New, needs sign-off:** while a draft is being discussed, its project, issue type, summary, description and priority (never the assignee or component), and the question the app is asking | `session.ts`, `submit` |
+| The LLM | **New, needs sign-off:** a screenshot, only when the user presses **Take a screenshot** (or pastes or drops an image) and then sends it. The image is not redacted, so anything visible in it is sent | `main.ts`, `captureScreen`; `session.ts` |
 | Jira or Rovo | Only the values on the confirmation card. With auto-create on, the complete, validated draft is sent instead. | `executor.ts` |
 
 **Never sent to the LLM:**

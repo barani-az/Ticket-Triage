@@ -29,8 +29,25 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
   live site automatically. If you haven't signed in, use *Connect Atlassian Rovo…* in the tray menu.
 - **Windows PowerShell:** set variables on their own line (`$env:ROVO_ONLY='1'`), because
   `ROVO_ONLY=1 npm run ...` only works in bash. Or put them in `.env`.
+- **Reasoning (needs the Gemini key):** it answers questions, asks one clarifying question when a
+  request is vague, or drafts a ticket and says why. Jira's own data still validates every value, and
+  a project it picked itself is confirmed with you first.
+- **History:** the clock button in the bar, `Ctrl+H`, or typing `history` lists every ticket you have
+  created from the app, newest first and grouped by day. Enter or a click opens it in Jira. It reads
+  the local audit log (`data/audit.jsonl`). Entries from the built-in mock Jira repeat keys (it resets
+  on each launch) and their links no longer open.
+- **Conversation:** the chat stays on screen. While a draft is open, tell it what to change ("make it
+  highest", "add that it started yesterday") or ask a question; say **create it** or **cancel**. Those
+  two are matched by fixed rules, not by the model, so the AI cannot trigger a write. A draft that is
+  being discussed is never auto-created. Type `new` or press `Ctrl+N` to start over.
+- **Screenshots:** say "I have an error on this page" and it asks "Can I take a screenshot?". Only
+  the **Take a screenshot** button captures (the window hides first). The image appears as a chip in
+  the bar and goes to Gemini only when you press Enter. `Ctrl+V` (after `Win+Shift+S`) and
+  drag-and-drop make the same chip. Gemini reads the error and drafts the ticket from it. The image
+  is not attached to the Jira ticket yet, and free-tier Gemini may use prompts to improve Google
+  products, so mind what is on screen.
 - Not built yet: installer and auto-update, running the core in a separate process, a connections
-  page, and image/screenshot input to Gemini.
+  page, attaching the screenshot to the Jira ticket, and the related-tickets check.
 
 ## Browser version (development)
 

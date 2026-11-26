@@ -136,12 +136,14 @@ describe('session with the reasoning layer', () => {
     expect(mock.issues.length).toBe(before);
   });
 
-  it('keeps the auto-create policy: once the guessed project is confirmed, a complete proposal is created straight away', async () => {
+  it('never auto-creates a draft that came out of a conversation: it waits to be told', async () => {
     const { gw } = scripted([BUG]);
     const session = new Session({ connections, audit, llm: gw, autoCreate: () => true });
     let msgs = await session.handle({ type: 'submit', text: 'login crashes on safari for customers' });
-    expect(msgs.find((m) => m.type === 'result')).toBeUndefined(); // not created before the guess is confirmed
     msgs = await session.handle({ type: 'answer', choiceId: 'WEB' });
+    expect(msgs.find((m) => m.type === 'result')).toBeUndefined();
+    expect(cardOf(msgs)?.canConfirm).toBe(true);
+    msgs = await session.handle({ type: 'submit', text: 'create it' });
     expect(msgs.find((m) => m.type === 'result')).toMatchObject({ ok: true, text: expect.stringMatching(/^Created WEB-/) });
   });
 
@@ -185,5 +187,131 @@ describe('session with the reasoning layer', () => {
     await session.handle({ type: 'submit', text: 'hello' });
     expect(calls[0].user).toContain('WEB: Website');
     expect(calls[0].user).toContain('APP: Mobile App');
+  });
+});
+
+describe('screenshots', () => {
+  const ASK = { intent: 'screenshot', reply: 'Can I take a screenshot of your screen to see the error?', suggestions: [] };
+  const SHOT = 'data:image/jpeg;base64,/9j/4AAQ';
+
+  it('asks permission instead of guessing when the user points at their screen, and creates nothing', async () => {
+    const { gw } = scripted([ASK]);
+    const session = new Session({ connections, audit, llm: gw, autoCreate: () => true });
+    const before = mock.issues.length;
+    const msgs = await session.handle({ type: 'submit', text: 'there is an error on this page' });
+    expect(msgs).toHaveLength(1);
+    expect(assistantOf(msgs)).toMatchObject({ action: 'screenshot', text: expect.stringContaining('screenshot') });
+    expect(mock.issues.length).toBe(before);
+  });
+
+  it('reads the attached image, drafts from it, and does not ask for a screenshot again', async () => {
+    const { gw, calls } = scripted([ASK, { ...BUG, ticket: { ...BUG.ticket, summary: 'Checkout returns 500 error ERR-7731' } }]);
+    const session = new Session({ connections, audit, llm: gw });
+    await session.handle({ type: 'submit', text: 'there is an error on this page' });
+    const msgs = await session.handle({ type: 'submit', text: 'here it is', images: [SHOT] });
+    expect(calls[1].images).toEqual([SHOT]);
+    expect(calls[1].user).toContain('screenshot of the user');
+    expect(assistantOf(msgs)?.action).toBeUndefined();
+    expect(questionOf(msgs) ?? cardOf(msgs)).toBeDefined(); // it moved on to the normal flow
+  });
+
+  it('never asks twice: with an image already attached the permission action is dropped', async () => {
+    const { gw } = scripted([ASK]);
+    const session = new Session({ connections, audit, llm: gw });
+    const msgs = await session.handle({ type: 'submit', text: 'see this', images: [SHOT] });
+    expect(assistantOf(msgs)?.action).toBeUndefined();
+  });
+
+  it('keeps only a marker of the image in the conversation, never the image itself', async () => {
+    const { gw, calls } = scripted([{ intent: 'answer', reply: 'That looks like a server error.', suggestions: [] }]);
+    const session = new Session({ connections, audit, llm: gw });
+    await session.handle({ type: 'submit', text: 'what is this', images: [SHOT] });
+    await session.handle({ type: 'submit', text: 'and what should I do' });
+    expect(calls[1].user).toContain('User: what is this [screenshot attached]');
+    expect(calls[1].user).not.toContain(SHOT);
+    expect(calls[1].images).toBeUndefined();
+  });
+});
+
+describe('talking about a draft', () => {
+  const NAMED = { ...BUG, ticket: { ...BUG.ticket, project: 'WEB' } };
+  const open = async (replies: unknown[]) => {
+    const s = scripted(replies);
+    const session = new Session({ connections, audit, llm: s.gw });
+    const first = await session.handle({ type: 'submit', text: 'bug in WEB: login crashes on safari' });
+    expect(cardOf(first)?.canConfirm).toBe(true);
+    return { session, calls: s.calls };
+  };
+  const row = (msgs: CoreToUi[], field: string) => cardOf(msgs)?.card.rows.find((r) => r.field === field)?.value;
+
+  it('applies a requested change and keeps everything else', async () => {
+    const { session, calls } = await open([NAMED, { ...BUG, reply: 'Raised it to Highest.', ticket: { summary: 'Login page crashes on Safari', priority: 'Highest' } }]);
+    const msgs = await session.handle({ type: 'submit', text: 'make it highest' });
+    expect(assistantOf(msgs)?.text).toBe('Raised it to Highest.');
+    expect(row(msgs, 'priority')).toBe('Highest');
+    expect(row(msgs, 'project')).toBe('Website');
+    expect(row(msgs, 'components')).toBe('Frontend');
+    expect(row(msgs, 'description')).toContain('Customers cannot log in.');
+    expect(calls[1].user).toContain('Draft ticket being discussed (NOT created yet) on Company Jira');
+    expect(calls[1].user).toContain('priority: High');
+  });
+
+  it('never shows the model the people or components in a draft', async () => {
+    const { session, calls } = await open([NAMED, { intent: 'answer', reply: 'ok', suggestions: [] }]);
+    await session.handle({ type: 'submit', text: 'why high?' });
+    expect(calls[1].user).toContain('summary: Login page crashes on Safari');
+    expect(calls[1].user).not.toContain('components:');
+    expect(calls[1].user).not.toContain('Frontend');
+    expect(calls[1].user).not.toContain('assignee:');
+  });
+
+  it('does not move the project just because the model guessed another one', async () => {
+    const { session } = await open([NAMED, { ...BUG, ticket: { ...BUG.ticket, project: 'APP' } }]);
+    const msgs = await session.handle({ type: 'submit', text: 'add that it started yesterday' });
+    expect(row(msgs, 'project')).toBe('Website');
+  });
+
+  it('answers a side question and shows the draft again, unchanged', async () => {
+    const { session } = await open([NAMED, { intent: 'answer', reply: 'High means customers are blocked.', suggestions: [] }]);
+    const msgs = await session.handle({ type: 'submit', text: 'why high?' });
+    expect(assistantOf(msgs)?.text).toContain('customers are blocked');
+    expect(row(msgs, 'priority')).toBe('High');
+  });
+
+  it('creates on "create it" and drops on "cancel", by rule and without asking the model', async () => {
+    const yes = await open([NAMED]);
+    const created = await yes.session.handle({ type: 'submit', text: 'yes' });
+    expect(created.find((m) => m.type === 'result')).toMatchObject({ ok: true });
+    expect(yes.calls).toHaveLength(1);
+
+    const no = await open([NAMED]);
+    const before = mock.issues.length;
+    const dropped = await no.session.handle({ type: 'submit', text: 'never mind' });
+    expect(assistantOf(dropped)?.text).toContain('Nothing was created');
+    expect(mock.issues.length).toBe(before);
+    expect(no.calls).toHaveLength(1);
+  });
+
+  it('treats a reply that is not one of the choices as conversation', async () => {
+    const noComponent = { ...BUG, ticket: { ...BUG.ticket, project: 'WEB', components: undefined } };
+    const { gw, calls } = scripted([noComponent, { intent: 'answer', reply: 'A component is the part of the product it affects.', suggestions: [] }]);
+    const session = new Session({ connections, audit, llm: gw });
+    const first = await session.handle({ type: 'submit', text: 'bug in WEB: login crashes' });
+    expect(questionOf(first)?.field).toBe('components');
+    const msgs = await session.handle({ type: 'answer', text: 'what is a component?' });
+    expect(assistantOf(msgs)?.text).toContain('part of the product');
+    expect(questionOf(msgs)?.field).toBe('components'); // still waiting for it
+    expect(calls[1].user).toContain('The app is asking the user: Which component?');
+    const done = await session.handle({ type: 'answer', text: 'frontend' });
+    expect(cardOf(done)?.canConfirm).toBe(true);
+    expect(calls).toHaveLength(2); // a matching answer needs no model
+  });
+
+  it('forgets the conversation on "new"', async () => {
+    const { session, calls } = await open([NAMED, { intent: 'answer', reply: 'ok', suggestions: [] }]);
+    expect(await session.handle({ type: 'new' })).toEqual([]);
+    await session.handle({ type: 'submit', text: 'hello' });
+    expect(calls[1].user).not.toContain('Conversation so far');
+    expect(calls[1].user).not.toContain('Draft ticket');
   });
 });
