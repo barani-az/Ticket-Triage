@@ -25,8 +25,8 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
   Missing required values still produce questions, and read-only connections never create. Turn it off
   to get the confirmation card back. This is a deliberate relaxation of the plan's "every write is
   confirmed" rule, so keep it in mind when pointing the app at a real Jira.
-- **Atlassian Rovo:** after `npm run mcp:discover` (one-time sign-in), the tray app connects to your
-  live site automatically. If you haven't signed in, use *Connect Atlassian Rovo…* in the tray menu.
+- **Connect your tools:** type `/connect` in the window, or pick *Connect…* in the tray menu (see
+  [Connecting tools](#connecting-tools-connect) below).
 - **Windows PowerShell:** set variables on their own line (`$env:ROVO_ONLY='1'`), because
   `ROVO_ONLY=1 npm run ...` only works in bash. Or put them in `.env`.
 - Not built yet: installer and auto-update, running the core in a separate process, a connections
@@ -104,6 +104,36 @@ components on a live site are still untested.
 The sign-in requested every Atlassian scope, including delete and manage. This demo never calls those
 tools, but a real build should request only read, write and search scopes.
 
+## Connecting tools: /connect
+
+Type `/connect` in the window (or pick *Connect…* in the tray menu) and choose a tool. Each one
+signs in on the service's own page in your normal browser, so the app never sees your password, and
+`/connect` itself never goes to the LLM.
+
+```
+Connect which tool?
+1  Microsoft 365       not connected
+2  Jira Cloud          connected as Priya Nair @ example.atlassian.net
+3  Other connectors    coming later
+```
+
+- **Microsoft 365:** choose a work or school account (with Teams) or a personal one. Your browser
+  opens Microsoft's sign-in page; approve access and the window says *Connected as …*. If the browser
+  sign-in doesn't work out, *Use a code instead* shows a code to enter on Microsoft's page.
+- **Jira Cloud:** your browser opens Atlassian's sign-in page (the Rovo connection below).
+- **Already connected:** picking the tool offers *Sign in again* (for example with another account),
+  *Sign out* (disconnects and deletes its sign-in), or leaving it as it is.
+- **Remembered:** connections come back at the next launch. `data/connections.json` holds only the
+  Microsoft account kind; tokens stay in each service's own store (`data/rovo-oauth.json` for Rovo,
+  the Microsoft server's encrypted cache for Microsoft 365).
+- **If it fails,** the reason is in plain words, for example that your organisation needs an admin to
+  approve the app (the IT request is in `docs/decisions.md`), with a way to try again.
+- While you are in the browser the window may hide; the result is there when you reopen it, and a
+  notification says *Connected*.
+
+Developer shortcuts still work: `M365=1` in `.env` (with `M365_WORK=1`) and `npm run m365:login` for
+Microsoft 365, `npm run mcp:discover` for Rovo.
+
 ## Microsoft 365 (Outlook, calendar, To Do, Teams)
 
 The app talks to Microsoft 365 through Softeria's [ms-365-mcp-server](https://github.com/softeria/ms-365-mcp-server),
@@ -115,9 +145,7 @@ enabled, so sign-in asks Microsoft for just these permissions:
   `People.Read Team.ReadBasic.All Channel.ReadBasic.All Chat.Read ChatMessage.Send ChannelMessage.Send`
 
 ```bash
-# in .env: M365=1, plus M365_WORK=1 for a work account or M365_TENANT_ID=consumers for a personal one
-npm run m365:login      # one-time sign-in: open the URL it prints and enter the code
-npm run desktop
+npm run desktop         # then type /connect and pick Microsoft 365
 ```
 
 What to try:
