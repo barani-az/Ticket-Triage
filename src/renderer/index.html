@@ -176,7 +176,16 @@
   #shell.chat #bar .prompt, #shell.chat #kb, #shell.chat #toggle { display: none; }
   #shell.chat #input { font-size: 15px; }
   #shell.chat #prog { display: none; } /* the typing bubble shows work in progress */
-  #shell.chat #foot { order: 3; flex: none; }
+  #shell.chat #foot { order: 4; flex: none; }
+  #shell.chat #bar { order: 3; }
+  #shell.chat #cmds { order: 2; flex: none; margin: 0 12px 6px; padding: 4px; border: 1px solid var(--rule-2); border-radius: 14px; background: var(--layer); }
+
+  /* The command list that opens when the message starts with "/". */
+  #cmds { border-top: 1px solid var(--rule); padding: 6px 12px; }
+  #cmds[hidden] { display: none; }
+  #cmds .opt { padding: 7px 8px; }
+  #cmds .opt .n { width: 72px; }
+  #cmds .opt .t { font-size: 14px; }
 
   /* Your messages on the right, the assistant's on the left. */
   .echo { align-self: flex-end; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 78%; padding: 8px 13px; border-radius: 16px 16px 4px 16px; background: var(--ink); color: var(--on-ink); overflow-wrap: anywhere; }
@@ -230,6 +239,7 @@
     </button>
   </div>
   <div id="prog"></div>
+  <div id="cmds" hidden role="listbox" aria-label="Commands"></div>
   <div id="out" hidden aria-live="polite"></div>
   <div id="foot" hidden><div id="pills"></div><div id="keys"></div></div>
 </div>
@@ -363,7 +373,8 @@ function hint() {
     : cardAct ? CARD_PLACEHOLDER
     : pending ? (pending.choices.length ? 'Choose an option or type an answer' : 'Type your answer')
     : chat ? 'Type a message' : DEFAULT_PLACEHOLDER;
-  const keys = pending ? [['↑↓', 'choose'], ['Enter', 'select'], ['Esc', 'close']]
+  const keys = cmds.length ? [['↑↓', 'move'], ['Enter', 'run'], ['Tab', 'complete'], ['Esc', 'dismiss']]
+    : pending ? [['↑↓', 'choose'], ['Enter', 'select'], ['Esc', 'close']]
     : cardAct ? [['Enter', 'create'], ['Esc', 'close']]
     : histOpen ? [['↑↓', 'move'], ['Enter', 'open'], ['Esc', 'close']]
     : suggestOpen ? [['↑↓', 'move'], ['Enter', 'use'], ['Esc', 'close']]
@@ -400,13 +411,46 @@ function follow(text) {
   if (!busy) submitText(text);
 }
 
+// The commands listed when the message starts with "/". Add new ones here.
+const COMMANDS = [
+  { name: '/connect', text: 'Sign in to Microsoft 365 or Jira', run: () => follow('/connect') },
+  { name: '/new', text: 'Start a new chat', run: () => newChat() },
+  { name: '/history', text: 'Tickets you have created', run: () => showHistory() },
+];
+const cmdBox = document.getElementById('cmds');
+let cmds = [];          // the commands matching what is typed; empty while the list is closed
+let cmdSel = 0;
+
+function paintCmds() {
+  cmdBox.hidden = !cmds.length;
+  cmdBox.replaceChildren(...cmds.map((c, i) => el('div', { class: 'opt' + (i === cmdSel ? ' sel' : ''), role: 'option', 'aria-selected': String(i === cmdSel), onclick: () => runCmd(c) },
+    el('span', { class: 'n', text: c.name }), el('span', { class: 't', text: c.text }))));
+  hint();
+}
+// Open or narrow the list as the user types. A space or a second slash means it is not a command.
+function updateCmds() {
+  const typed = input.value.toLowerCase();
+  cmds = /^\/\w*$/.test(typed) && !images.length ? COMMANDS.filter(c => c.name.startsWith(typed)) : [];
+  cmdSel = 0;
+  paintCmds();
+}
+function closeCmds() { if (cmds.length) { cmds = []; paintCmds(); } }
+function runCmd(c) {
+  if (busy) return;
+  input.value = ''; closeCmds(); hint();
+  c.run();
+  input.focus();
+}
+
 // Say something to the assistant. The conversation stays on screen; only the waiting prompt is replaced.
 function submitText(typed) {
   closePanel();
+  closeCmds();
   const sent = images;
   const text = typed || (sent.length ? 'Here is a screenshot of what I see.' : '');
   if (!text) return;
-  const answering = pending && !sent.length;
+  // A command is never the answer to a waiting question.
+  const answering = pending && !sent.length && !text.startsWith('/');
   out.querySelectorAll('.preview .actions').forEach(a => a.remove());
   setImages([]);
   clearPrompt();
@@ -623,7 +667,7 @@ async function showHistory() {
 document.getElementById('hist').addEventListener('click', () => { histOpen ? closeSuggestions() : showHistory(); input.focus(); });
 
 
-input.addEventListener('input', () => { if (suggestOpen || histOpen) closeSuggestions(); hint(); });
+input.addEventListener('input', () => { if (suggestOpen || histOpen) closeSuggestions(); updateCmds(); hint(); });
 toggle.addEventListener('click', () => { suggestOpen ? closeSuggestions() : showSuggestions(); input.focus(); });
 sendBtn.addEventListener('click', () => { if (busy) return; const t = input.value.trim(); input.value = ''; submitText(t); input.focus(); });
 document.getElementById('newchat').addEventListener('click', () => { newChat(); input.focus(); });
@@ -645,6 +689,13 @@ document.addEventListener('drop', async e => {
 });
 
 input.addEventListener('keydown', e => {
+  // While the command list is open, these keys belong to it.
+  if (cmds.length) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); cmdSel = (cmdSel + (e.key === 'ArrowDown' ? 1 : -1) + cmds.length) % cmds.length; paintCmds(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); runCmd(cmds[cmdSel]); return; }
+    if (e.key === 'Tab') { e.preventDefault(); input.value = cmds[cmdSel].name; updateCmds(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCmds(); return; }
+  }
   if (e.key === 'Enter') {
     if (busy) return;
     const typed = input.value.trim();
