@@ -84,7 +84,7 @@ export class FileOAuthProvider implements OAuthClientProvider {
 }
 
 /** Loopback listener that receives the OAuth redirect (http://127.0.0.1:<port>/callback). */
-function listenForCode(port: number): Promise<{ code: Promise<string>; close: () => void }> {
+function listenForCode(port: number): Promise<{ code: Promise<string>; close: () => void; abort: (e: Error) => void }> {
   return new Promise((resolve, reject) => {
     let deliver!: (code: string) => void;
     let fail!: (e: Error) => void;
@@ -115,6 +115,7 @@ function listenForCode(port: number): Promise<{ code: Promise<string>; close: ()
           clearTimeout(timer);
           server.close();
         },
+        abort: (e: Error) => fail(e),
       });
     });
   });
@@ -133,6 +134,10 @@ export interface RemoteOptions {
   log?: (line: string) => void;
   /** Default true. When false, never open a browser: fail if the saved sign-in is missing or expired. */
   interactive?: boolean;
+  /** Called with the sign-in page's address, so a UI can offer it if the browser did not open. */
+  onUrl?: (url: string) => void;
+  /** Aborting stops waiting for the sign-in and frees the callback port. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -143,11 +148,15 @@ export async function connectRemoteMcp(opts: RemoteOptions): Promise<Client> {
   const log = opts.log ?? (() => undefined);
   const port = opts.callbackPort ?? 8976;
   const interactive = opts.interactive !== false;
-  const listener = interactive ? await listenForCode(port) : { code: Promise.reject(new Error('not interactive')), close: () => undefined };
+  const listener = interactive
+    ? await listenForCode(port)
+    : { code: Promise.reject(new Error('not interactive')), close: () => undefined, abort: () => undefined };
   listener.code.catch(() => undefined);
+  opts.signal?.addEventListener('abort', () => listener.abort(new Error('Sign-in cancelled.')), { once: true });
   const provider = new FileOAuthProvider(opts.storeFile, `http://127.0.0.1:${port}/callback`, (url) => {
     if (!interactive) return;
     log(`Opening your browser to sign in. If nothing opens, visit:\n${url.toString()}`);
+    opts.onUrl?.(url.toString());
     openInBrowser(url.toString());
   });
   const make = () => ({

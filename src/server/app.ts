@@ -10,6 +10,7 @@ import { AuditLog } from '../core/executor.js';
 import { gatewayFromEnv } from '../core/llm.js';
 import { Session } from '../core/session.js';
 import { connectMs365 } from '../mcp/ms365Server.js';
+import { createConnect } from './connect.js';
 import { connectRemoteMcp } from '../mcp/remote.js';
 import { startMockJira } from '../mock/jiraMock.js';
 
@@ -73,8 +74,8 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   }
 
   /** Connect to Atlassian Rovo. Interactive opens the browser; otherwise a saved sign-in is required. */
-  async function connectRovo(interactive: boolean, log?: (l: string) => void): Promise<Connection> {
-    const client = await connectRemoteMcp({ url: ROVO_URL, storeFile: rovoStore, interactive, log });
+  async function connectRovo(interactive: boolean, extra: { onUrl?: (url: string) => void; signal?: AbortSignal } = {}): Promise<Connection> {
+    const client = await connectRemoteMcp({ url: ROVO_URL, storeFile: rovoStore, interactive, ...extra });
     return {
       id: 'rovo',
       name: 'Atlassian Rovo (live)',
@@ -103,7 +104,8 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
 
   const audit = new AuditLog(path.join(opts.dataDir, 'audit.jsonl'));
   const llm = gatewayFromEnv(env);
-  const session = new Session({ connections, audit, llm, autoCreate: opts.autoCreate });
+  const connect = createConnect({ connections, rovo: (o) => connectRovo(true, o) });
+  const session = new Session({ connections, audit, llm, autoCreate: opts.autoCreate, connect });
 
   return {
     baseUrl: baseUrl || 'https://mcp.atlassian.com',
@@ -114,11 +116,6 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     llmEnabled: Boolean(llm),
     rovoError,
     m365Error,
-    /** Sign in to Rovo (opens the browser) and add it as a connection. */
-    async addRovo(log?: (l: string) => void) {
-      if (connections.some((c) => c.id === 'rovo')) return;
-      connections.push(await connectRovo(true, log));
-    },
     /** What the UI shows: each connection's health, whether an LLM is on, and example requests. */
     async describe() {
       const list = await Promise.all(
