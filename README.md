@@ -36,7 +36,7 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
 
 ```bash
 npm run web         # http://127.0.0.1:4000 (same chat page, served over HTTP)
-npm test            # 60 tests
+npm test            # 90 tests
 ```
 
 The demo starts a mock Jira (on a free port; set `MOCK_JIRA_PORT` to pin one) and two connections to it:
@@ -103,6 +103,43 @@ components on a live site are still untested.
 
 The sign-in requested every Atlassian scope, including delete and manage. This demo never calls those
 tools, but a real build should request only read, write and search scopes.
+
+## Microsoft 365 (Outlook, calendar, To Do, Teams)
+
+The app talks to Microsoft 365 through Softeria's [ms-365-mcp-server](https://github.com/softeria/ms-365-mcp-server),
+pinned to 0.191.0 in `package.json` and started as a child process. Only the tools the app uses are
+enabled, so sign-in asks Microsoft for just these permissions:
+
+- Personal account: `Mail.Read Mail.Send Calendars.ReadWrite Tasks.ReadWrite`
+- Work or school account (`M365_WORK=1`), which adds Teams and people lookups: the above plus
+  `People.Read Team.ReadBasic.All Channel.ReadBasic.All Chat.Read ChatMessage.Send ChannelMessage.Send`
+
+```bash
+# in .env: M365=1, plus M365_WORK=1 for a work account or M365_TENANT_ID=consumers for a personal one
+npm run m365:login      # one-time sign-in: open the URL it prints and enter the code
+npm run desktop
+```
+
+What to try:
+
+- `email Meera that the release moved to Friday`: the card shows the exact recipient and full text
+- `set up a bug triage meeting with Arjun tomorrow at 3 with a Teams link`
+- `remind me to check the release notes on Friday` (a To Do task)
+- `post in the Web team's Releases channel that 2.3 is out` (work account)
+- `make a ticket from Sam's email about checkout`: lists matching emails, drafts the ticket from the one
+  you pick, and links back to it. `log the bug from the release chat` does the same for a Teams chat.
+- After a ticket is created, buttons offer to reply to whoever reported it, post it in a channel, or set a reminder.
+
+Safety: emails, replies, invites and Teams messages always show the card, even with *Create without
+asking* on, and the confirm button needs a second press because they can't be unsent. The server's own
+write gate is on (`MS365_MCP_REQUIRE_CONFIRM`), so it refuses any write the card did not approve. An
+email or chat you make a ticket from goes to the LLM as quoted data that it is told not to take orders from.
+
+Limits: tested against a fake server only (`tests/helpers/fakeMs365.ts`), not yet against a real
+account. One recipient or attendee per message. Teams channel threads can't become tickets yet,
+because reading channel messages needs admin consent; chats work. The server's token key falls back to a
+file next to its cache because npm skipped keytar's native build; the cache lives in the server's own
+folder (`~/Library/Application Support/ms-365-mcp-server/` on macOS), outside this repo.
 
 ## Use a real Jira (untested)
 
