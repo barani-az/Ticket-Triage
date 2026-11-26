@@ -9,6 +9,8 @@ export interface Connector {
     basic?: boolean;
     /** Set for connections to a real site: shown on the confirmation card before any write. */
     live?: string;
+    /** Every write shows the card, even with "create without asking" on (messages can't be unsent). */
+    confirmAlways?: boolean;
   };
   testConnection(): Promise<
     { ok: true; actingAs: string } | { ok: false; error: string; needsReauth?: boolean }
@@ -21,7 +23,20 @@ export interface Connector {
   getSchema(ctx: Record<string, string>): Promise<JsonSchema>;
   lookup(kind: string, text: string, ctx?: Record<string, string>): Promise<Candidate[]>;
   execute(step: PlanStep): Promise<ExecResult>;
+  /** Read an email or chat the user picked, so a ticket can be drafted from it. */
+  read?(kind: 'email' | 'chat', id: string): Promise<SourceContent>;
   close?(): Promise<void>;
+}
+
+export interface SourceContent {
+  id: string;
+  kind: 'email' | 'chat';
+  title: string;
+  /** Who sent it (or the chat's name). */
+  from: string;
+  fromAddress?: string;
+  text: string;
+  link?: string;
 }
 
 export interface Connection {

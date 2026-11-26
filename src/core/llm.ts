@@ -1,3 +1,5 @@
+import { clip, debug, log } from './log.js';
+
 /** The LLM proposes. Everything it returns is checked against the tool's own data afterwards. */
 export interface LlmCall {
   system: string;
@@ -29,7 +31,22 @@ export interface OpenAiCompatConfig {
 export class OpenAiCompatGateway implements LlmGateway {
   constructor(private cfg: OpenAiCompatConfig) {}
 
-  async extractJson({ system, user, effort, timeoutMs, images }: LlmCall): Promise<unknown> {
+  async extractJson(call: LlmCall): Promise<unknown> {
+    const t0 = Date.now();
+    const what = `${this.cfg.model}${call.effort ? ` (effort ${call.effort})` : ''}${call.images?.length ? ` + ${call.images.length} image(s)` : ''}`;
+    debug('llm', () => `${what} prompt: ${clip(call.user, 2000)}`);
+    try {
+      const out = await this.send(call);
+      log('llm', `${what} answered in ${Date.now() - t0} ms`);
+      debug('llm', () => `${this.cfg.model} reply: ${clip(JSON.stringify(out), 2000)}`);
+      return out;
+    } catch (e) {
+      log('llm', `${what} failed after ${Date.now() - t0} ms: ${clip((e as Error).message, 200)}`);
+      throw e;
+    }
+  }
+
+  private async send({ system, user, effort, timeoutMs, images }: LlmCall): Promise<unknown> {
     const res = await (this.cfg.fetchFn ?? fetch)(`${this.cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       signal: AbortSignal.timeout(timeoutMs ?? this.cfg.timeoutMs ?? 20_000),
@@ -86,9 +103,13 @@ export class FallbackGateway implements LlmGateway {
     // A model that just failed goes to the back, so every message does not wait on it again.
     const order = [...this.gateways.filter((g) => !cooling(g)), ...this.gateways.filter(cooling)];
     let last: unknown;
-    for (const g of order) {
+    for (const [i, g] of order.entries()) {
       const left = deadline - Date.now();
-      if (left <= 0) break;
+      if (left <= 0) {
+        log('llm', 'out of time for this message; no more models tried');
+        break;
+      }
+      if (i > 0) log('llm', 'trying the next model');
       try {
         const result = await g.extractJson(Number.isFinite(left) ? { ...opts, timeoutMs: Math.min(opts.timeoutMs ?? left, left) } : opts);
         this.coolingUntil.delete(g);

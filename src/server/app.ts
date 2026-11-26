@@ -8,7 +8,10 @@ import { McpConnector } from '../core/connectors/mcp.js';
 import { ROVO_URL, RovoJiraConnector } from '../core/connectors/rovo.js';
 import { AuditLog } from '../core/executor.js';
 import { gatewayFromEnv } from '../core/llm.js';
+import { configureLog, log } from '../core/log.js';
 import { Session } from '../core/session.js';
+import { connectMs365, followMs365Log } from '../mcp/ms365Server.js';
+import { createConnect } from './connect.js';
 import { connectRemoteMcp } from '../mcp/remote.js';
 import { startMockJira } from '../mock/jiraMock.js';
 
@@ -30,6 +33,8 @@ export type App = Awaited<ReturnType<typeof createApp>>;
  * and Atlassian's live Rovo connection when a saved sign-in exists. ROVO_ONLY=1 drops the mocks.
  */
 export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
+  configureLog(env.LOG);
+  log('app', `starting (data in ${opts.dataDir})`);
   const connections: Connection[] = [];
   let baseUrl = env.JIRA_BASE_URL ?? '';
   let closeMock: (() => Promise<void>) | undefined;
@@ -72,8 +77,8 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   }
 
   /** Connect to Atlassian Rovo. Interactive opens the browser; otherwise a saved sign-in is required. */
-  async function connectRovo(interactive: boolean, log?: (l: string) => void): Promise<Connection> {
-    const client = await connectRemoteMcp({ url: ROVO_URL, storeFile: rovoStore, interactive, log });
+  async function connectRovo(interactive: boolean, extra: { onUrl?: (url: string) => void; signal?: AbortSignal } = {}): Promise<Connection> {
+    const client = await connectRemoteMcp({ url: ROVO_URL, storeFile: rovoStore, interactive, ...extra });
     return {
       id: 'rovo',
       name: 'Atlassian Rovo (live)',
@@ -91,9 +96,55 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     }
   }
 
+  // What /connect remembers between launches (no secrets: tokens stay in each service's own store).
+  const savedFile = path.join(opts.dataDir, 'connections.json');
+  let saved: { m365?: { work: boolean } } = {};
+  try {
+    saved = JSON.parse(fs.readFileSync(savedFile, 'utf8'));
+  } catch {
+    /* first launch */
+  }
+  const root = opts.root ?? process.cwd();
+  // A personal account needs the "consumers" authority, or its sign-in stops working after about an hour.
+  const ms365Env = (work: boolean) => ({ ...env, M365_WORK: work ? '1' : '0', M365_TENANT_ID: env.M365_TENANT_ID ?? (work ? undefined : 'consumers') });
+
+  // The Microsoft 365 server can only log to a file, so its lines are followed into this log.
+  const say = (tag: string) => (line: string) => log(tag, line);
+  const stopLog = env.LOG === '0' || env.LOG === 'off' ? undefined : followMs365Log(say('ms365-server'));
+
+  let m365Error: string | undefined;
+  if (env.M365 === '1' || saved.m365) {
+    try {
+      const work = env.M365_WORK !== undefined ? env.M365_WORK === '1' : Boolean(saved.m365?.work);
+      connections.push(await connectMs365(root, ms365Env(work), { log: say('ms365-server') }));
+    } catch (e) {
+      m365Error = (e as Error).message;
+    }
+  }
+
   const audit = new AuditLog(path.join(opts.dataDir, 'audit.jsonl'));
   const llm = gatewayFromEnv(env);
-  const session = new Session({ connections, audit, llm, autoCreate: opts.autoCreate });
+  const connect = createConnect({
+    connections,
+    rovo: (o) => connectRovo(true, o),
+    ms365: ({ work, deviceCode }) => connectMs365(root, ms365Env(work), { deviceCode, log: say('ms365-server') }),
+    log: say('connect'),
+    ms365Browser: Boolean(env.M365_CLIENT_ID),
+    remember: (tool, settings) => {
+      if (tool === 'jira') {
+        if (!settings) fs.rmSync(rovoStore, { force: true }); // signing out of Jira forgets its tokens
+        return;
+      }
+      saved = { ...saved, m365: settings };
+      if (!settings) delete saved.m365;
+      fs.mkdirSync(opts.dataDir, { recursive: true });
+      fs.writeFileSync(savedFile, JSON.stringify(saved, null, 2));
+    },
+  });
+  const session = new Session({ connections, audit, llm, autoCreate: opts.autoCreate, connect });
+  log('app', `ready: connections ${connections.map((c) => `${c.name}${c.readOnly ? ' (read-only)' : ''}`).join(', ') || 'none'}; AI ${llm ? 'on' : 'off (built-in rules)'}`);
+  if (rovoError) log('app', `Atlassian Rovo not connected: ${rovoError}`);
+  if (m365Error) log('app', `Microsoft 365 not connected: ${m365Error}`);
 
   return {
     baseUrl: baseUrl || 'https://mcp.atlassian.com',
@@ -103,11 +154,7 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     audit,
     llmEnabled: Boolean(llm),
     rovoError,
-    /** Sign in to Rovo (opens the browser) and add it as a connection. */
-    async addRovo(log?: (l: string) => void) {
-      if (connections.some((c) => c.id === 'rovo')) return;
-      connections.push(await connectRovo(true, log));
-    },
+    m365Error,
     /** What the UI shows: each connection's health, whether an LLM is on, and example requests. */
     async describe() {
       const list = await Promise.all(
@@ -128,6 +175,7 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
       };
     },
     async close() {
+      stopLog?.();
       await Promise.all(connections.map((c) => c.connector.close?.()));
       await closeMock?.();
     },
@@ -146,6 +194,10 @@ async function examples(connections: Connection[]): Promise<string[]> {
     } catch {
       /* the connection is unhealthy; it shows in the status badges */
     }
+  }
+  if (connections.some((c) => c.connector.manifest.type === 'ms365')) {
+    out.splice(1, 0, 'make a ticket from the latest email about a bug');
+    out.push('email the team that the release moved to Friday');
   }
   if (!out.length) out.push('create a task for update the onboarding checklist');
   return out.slice(0, 3);

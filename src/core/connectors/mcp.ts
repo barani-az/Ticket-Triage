@@ -1,5 +1,6 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Candidate, ExecResult, JsonSchema, PlanStep } from '../types.js';
+import { mcpFailure, timed } from '../log.js';
 import type { Connector } from './contract.js';
 
 /**
@@ -42,7 +43,7 @@ export class McpConnector implements Connector {
   async execute(step: PlanStep): Promise<ExecResult> {
     try {
       const tool = await this.writeTool();
-      const res = await this.client.callTool({ name: tool.name, arguments: step.params });
+      const res = await timed('mcp', tool.name, () => this.client.callTool({ name: tool.name, arguments: step.params }), { args: step.params, failed: mcpFailure });
       const text = ((res.content as { type: string; text?: string }[])?.find((c) => c.type === 'text')?.text) ?? '';
       if (res.isError) return { ok: false, error: text || 'The tool reported an error.', retryable: false };
       const parsed = JSON.parse(text) as { id: string; url: string };

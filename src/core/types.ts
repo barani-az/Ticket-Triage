@@ -21,7 +21,8 @@ export interface PlanStep {
 }
 
 export type ExecResult =
-  | { ok: true; id: string; url: string }
+  /** `stamp` and `linkText` label non-ticket results, e.g. "Email sent" and "Open in Outlook". */
+  | { ok: true; id: string; url: string; stamp?: string; linkText?: string }
   | { ok: false; error: string; retryable: boolean };
 
 export interface Question {
@@ -47,6 +48,10 @@ export interface ConfirmationCard {
   connectionName: string;
   rows: CardRow[];
   warnings: string[];
+  /** The confirm button's text, e.g. "Send email". */
+  button: string;
+  /** Needs a second press: a real issue, or a message that can't be unsent. */
+  guard: boolean;
 }
 
 export interface HintedField {

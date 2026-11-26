@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Ajv } from 'ajv';
 import type { Connection } from './connectors/contract.js';
+import { log } from './log.js';
 import type { ConfirmationCard, ExecResult, Fields, JsonSchema, PlanStep } from './types.js';
 
 const ajv = new Ajv({ allErrors: true, strict: false });
@@ -36,10 +37,18 @@ export function buildPlan(conn: Connection, fields: Fields, schema: JsonSchema):
   if (conn.connector.manifest.basic) warnings.push('Basic connection: values could not be looked up, only checked against the schema.');
   if (conn.connector.manifest.live) warnings.push(`This creates a real issue on ${conn.connector.manifest.live}.`);
   if (conn.readOnly) warnings.push('This connection is read-only, so nothing can be created.');
+  warnings.push(...((schema['x-warnings'] ?? []) as string[]));
 
   return {
     step: { connectionId: conn.id, op: 'create', params },
-    card: { title: 'Create issue', connectionName: conn.name, rows, warnings },
+    card: {
+      title: schema.title ?? `Create this ticket on ${conn.name}?`,
+      connectionName: conn.name,
+      rows,
+      warnings,
+      button: schema['x-button'] ?? (conn.connector.manifest.live ? 'Create real ticket' : 'Create ticket'),
+      guard: Boolean(schema['x-guard'] || conn.connector.manifest.live),
+    },
     errors,
   };
 }
@@ -92,5 +101,6 @@ export async function executePlan(
     }
   }
   audit.write({ at: new Date().toISOString(), connection: conn.name, request, step: plan.step, result });
+  log('write', `${conn.name}: ${result.ok ? `done ${result.stamp ? `${result.stamp} ` : ''}${result.id}${result.url ? ` ${result.url}` : ''}` : `NOT done: ${result.error}`}`);
   return result;
 }

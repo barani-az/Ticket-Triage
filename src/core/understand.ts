@@ -41,6 +41,22 @@ export function understandWithRules(request: string): Understanding {
   const summary = extractSummary(text);
   if (summary) fields.summary = { value: summary, confidence: 0.8 };
 
+  // Without an LLM, a Microsoft 365 request still gets its action picked (only that connector reads it).
+  const action = /\breply\b/i.test(text)
+    ? 'reply'
+    : /\b(e-?mail|mail)\b/i.test(text)
+      ? 'email'
+      : /\b(meeting|invite|schedule)\b/i.test(text)
+        ? 'meeting'
+        : /\bchannel\b/i.test(text)
+          ? 'channel'
+          : /\bteams\b|\bchat\b/i.test(text)
+            ? 'chat'
+            : /\b(to ?do|remind)\b/i.test(text)
+              ? 'task'
+              : undefined;
+  if (action) fields.action = { value: action, confidence: 0.8 };
+
   return { operation, fields, mentionedTool };
 }
 

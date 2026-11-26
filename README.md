@@ -25,8 +25,8 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
   Missing required values still produce questions, and read-only connections never create. Turn it off
   to get the confirmation card back. This is a deliberate relaxation of the plan's "every write is
   confirmed" rule, so keep it in mind when pointing the app at a real Jira.
-- **Atlassian Rovo:** after `npm run mcp:discover` (one-time sign-in), the tray app connects to your
-  live site automatically. If you haven't signed in, use *Connect Atlassian Rovo…* in the tray menu.
+- **Connect your tools:** type `/connect` in the window, or pick *Connect…* in the tray menu (see
+  [Connecting tools](#connecting-tools-connect) below).
 - **Windows PowerShell:** set variables on their own line (`$env:ROVO_ONLY='1'`), because
   `ROVO_ONLY=1 npm run ...` only works in bash. Or put them in `.env`.
 - **Reasoning (needs the Gemini key):** it answers questions, asks one clarifying question when a
@@ -53,7 +53,7 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
 
 ```bash
 npm run web         # http://127.0.0.1:4000 (same chat page, served over HTTP)
-npm test            # 60 tests
+npm test            # 90 tests
 ```
 
 The demo starts a mock Jira (on a free port; set `MOCK_JIRA_PORT` to pin one) and two connections to it:
@@ -120,6 +120,83 @@ components on a live site are still untested.
 
 The sign-in requested every Atlassian scope, including delete and manage. This demo never calls those
 tools, but a real build should request only read, write and search scopes.
+
+## Logs
+
+The terminal that runs the app (`npm run desktop` or `npm run web`) shows a timestamped line for every
+step: each message from the window and each reply (`[session]`), the AI's calls and decisions (`[llm]`,
+`[ai]`), every call to Jira, Rovo and Microsoft 365 with its timing (`[jira]`, `[rovo]`, `[m365]`), every
+write (`[write]`), sign-in steps (`[connect]`), the Microsoft 365 server's own log (`[ms365-server]`) and
+window events (`[window]`, `[tray]`). Set `LOG=debug` in `.env` to also see prompts, tool arguments and
+replies, or `LOG=0` to turn it off. Keys and tokens are never logged; screenshots only as a count.
+
+## Connecting tools: /connect
+
+Type `/connect` in the window (or pick *Connect…* in the tray menu) and choose a tool. Each one
+signs in on the service's own page in your normal browser, so the app never sees your password, and
+`/connect` itself never goes to the LLM.
+
+```
+Connect which tool?
+1  Microsoft 365       not connected
+2  Jira Cloud          connected as Priya Nair @ example.atlassian.net
+3  Other connectors    coming later
+```
+
+- **Microsoft 365:** choose a work or school account (with Teams) or a personal one. The window shows a
+  code; *Copy code and open the page* takes you to Microsoft's sign-in page, where you paste it and
+  approve access, and the window says *Connected as …*. A code is needed because the server's ready-made
+  Microsoft app rejects a browser redirect to this machine ("redirect_uri is not valid"). With our own
+  app registration (`M365_CLIENT_ID`, the IT request in `docs/decisions.md`) Microsoft 365 signs in
+  through the browser like Jira, with *Use a code instead* as the fallback.
+- **Jira Cloud:** your browser opens Atlassian's sign-in page (the Rovo connection below).
+- **Already connected:** picking the tool offers *Sign in again* (for example with another account),
+  *Sign out* (disconnects and deletes its sign-in), or leaving it as it is.
+- **Remembered:** connections come back at the next launch. `data/connections.json` holds only the
+  Microsoft account kind; tokens stay in each service's own store (`data/rovo-oauth.json` for Rovo,
+  the Microsoft server's encrypted cache for Microsoft 365).
+- **If it fails,** the reason is in plain words, for example that your organisation needs an admin to
+  approve the app (the IT request is in `docs/decisions.md`), with a way to try again.
+- While you are in the browser the window may hide; the result is there when you reopen it, and a
+  notification says *Connected*.
+
+Developer shortcuts still work: `M365=1` in `.env` (with `M365_WORK=1`) and `npm run m365:login` for
+Microsoft 365, `npm run mcp:discover` for Rovo.
+
+## Microsoft 365 (Outlook, calendar, To Do, Teams)
+
+The app talks to Microsoft 365 through Softeria's [ms-365-mcp-server](https://github.com/softeria/ms-365-mcp-server),
+pinned to 0.191.0 in `package.json` and started as a child process. Only the tools the app uses are
+enabled, so sign-in asks Microsoft for just these permissions:
+
+- Personal account: `Mail.Read Mail.Send Calendars.ReadWrite Tasks.ReadWrite`
+- Work or school account (`M365_WORK=1`), which adds Teams and people lookups: the above plus
+  `People.Read Team.ReadBasic.All Channel.ReadBasic.All Chat.Read ChatMessage.Send ChannelMessage.Send`
+
+```bash
+npm run desktop         # then type /connect and pick Microsoft 365
+```
+
+What to try:
+
+- `email Meera that the release moved to Friday`: the card shows the exact recipient and full text
+- `set up a bug triage meeting with Arjun tomorrow at 3 with a Teams link`
+- `remind me to check the release notes on Friday` (a To Do task)
+- `post in the Web team's Releases channel that 2.3 is out` (work account)
+- `make a ticket from Sam's email about checkout`: lists matching emails, drafts the ticket from the one
+  you pick, and links back to it. `log the bug from the release chat` does the same for a Teams chat.
+- After a ticket is created, buttons offer to reply to whoever reported it, post it in a channel, or set a reminder.
+
+Safety: emails, replies, invites and Teams messages always show the card, even with *Create without
+asking* on, and the confirm button needs a second press because they can't be unsent. The server's own
+write gate is on (`MS365_MCP_REQUIRE_CONFIRM`), so it refuses any write the card did not approve. An
+email or chat you make a ticket from goes to the LLM as quoted data that it is told not to take orders from.
+
+Limits: tested against a fake server only (`tests/helpers/fakeMs365.ts`), not yet against a real
+account. One recipient or attendee per message. Teams channel threads can't become tickets yet,
+because reading channel messages needs admin consent; chats work. The server's token key falls back to a
+file next to its cache because npm skipped keytar's native build; the cache lives in the server's own
+folder (`~/Library/Application Support/ms-365-mcp-server/` on macOS), outside this repo.
 
 ## Use a real Jira (untested)
 

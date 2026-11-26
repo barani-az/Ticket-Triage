@@ -1,4 +1,5 @@
 import type { Candidate, ExecResult, JsonSchema, PlanStep } from '../types.js';
+import { timed } from '../log.js';
 import type { Connector } from './contract.js';
 
 export interface JiraConfig {
@@ -33,14 +34,17 @@ export class JiraConnector implements Connector {
       this.cfg.flavor === 'cloud'
         ? `Basic ${Buffer.from(`${this.cfg.email ?? ''}:${this.cfg.token}`).toString('base64')}`
         : `Bearer ${this.cfg.token}`;
-    const res = await (this.cfg.fetchFn ?? fetch)(`${this.cfg.baseUrl}${path}`, {
-      method,
-      headers: { authorization: auth, 'content-type': 'application/json', accept: 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await res.text();
-    if (!res.ok) throw new JiraError(res.status, describeError(text) || res.statusText);
-    return (text ? JSON.parse(text) : {}) as T;
+    // The log shows the method, path, timing and body (debug), never the authorization header.
+    return timed('jira', `${method} ${path}`, async () => {
+      const res = await (this.cfg.fetchFn ?? fetch)(`${this.cfg.baseUrl}${path}`, {
+        method,
+        headers: { authorization: auth, 'content-type': 'application/json', accept: 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await res.text();
+      if (!res.ok) throw new JiraError(res.status, describeError(text) || res.statusText);
+      return (text ? JSON.parse(text) : {}) as T;
+    }, { args: body });
   }
 
   async testConnection() {

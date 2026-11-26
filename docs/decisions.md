@@ -12,6 +12,7 @@ These are the answers that Task 0 of the MVP plan asks for (`docs/superpowers/pl
 | 4 | Deletes and bulk edits are blocked | Decided |
 | 5 | Jira Cloud sign-in: Rovo's OAuth (no secret), not classic 3LO | Decided |
 | 6 | Production model: gemini-3.5-flash-lite, with two fallbacks | Decided |
+| 7 | Microsoft 365 through Softeria's ms-365-mcp-server | Proposed |
 
 ## 1. Team language: Electron and TypeScript (Option A)
 
@@ -54,9 +55,11 @@ The rule to approve is: the app sends only this, and anything more needs a new d
 | The LLM | The last 10 turns of the current session (what the user and the assistant said) | `session.ts`, `consult` |
 | The LLM | The names of the connected tools, up to 12 project keys and names per connection, and today's date | `session.ts`, `context` |
 | The LLM | Keys and summaries of the last 5 tickets created, taken from the audit log | `session.ts`, `context` |
+| The LLM | An email or Teams chat the user picks to make a ticket from: its sender, subject or chat name, and up to 6,000 characters of text, quoted as data the model must not take orders from | `session.ts`, `fromSource` |
 | The LLM | **New, needs sign-off:** while a draft is being discussed, its project, issue type, summary, description and priority (never the assignee or component), and the question the app is asking | `session.ts`, `submit` |
 | The LLM | **New, needs sign-off:** a screenshot, only when the user presses **Take a screenshot** (or pastes or drops an image) and then sends it. The image is not redacted, so anything visible in it is sent | `main.ts`, `captureScreen`; `session.ts` |
 | Jira or Rovo | Only the values on the confirmation card. With auto-create on, the complete, validated draft is sent instead. | `executor.ts` |
+| Microsoft 365 | Only the values on the card (recipient, subject, full message text, time), after the user confirms. Auto-create never applies. | `ms365.ts` |
 
 **Never sent to the LLM:**
 - tokens and keys
@@ -76,6 +79,7 @@ Code picks them by checking against the tool's own data (`matcher.ts`, `question
 - A per-connection switch that never sends anything to the LLM, for tools under NDA. This is not built.
 - Whether the text a user writes in a ticket may go to a provider outside the company's region.
 - Removing secrets from a request before it is sent. This is part of the helpdesk concept and is not built.
+- Whether email and chat text may go to the LLM at all. Making a ticket from an email or chat depends on it; without an LLM the app still works, using the subject as the title and the text as the description.
 
 ## 4. Deletes and bulk edits: blocked
 
@@ -146,6 +150,25 @@ This is proven in this repo: `src/mcp/remote.ts` registers with `token_endpoint_
 - The free-tier quota alone rules out real use (decision 2).
 - Re-run `npx tsx scripts/evalModels.ts` on about 30 real, anonymised requests once a paid tier is approved, and again whenever the model or the prompt changes.
 
+## 7. Microsoft 365 through Softeria's ms-365-mcp-server
+
+**Proposed.**
+The app reaches Outlook, the calendar, To Do and Teams through [ms-365-mcp-server](https://github.com/softeria/ms-365-mcp-server) (MIT), pinned to 0.191.0 and started as a child process over stdio (`src/mcp/ms365Server.ts`).
+
+**Why this server:**
+- It works with the MCP client the app already has, so there was no new sign-in code to write.
+- It can be limited to the exact tools the app uses (`--enabled-tools`), and sign-in then asks Microsoft only for those permissions. A personal account gets 4, a work account 10. None of them reads files, deletes anything or reads Teams channels.
+- It ships a ready-made Microsoft app, so development needs no Entra registration. Our own registration is one setting (`M365_CLIENT_ID`).
+- Its write gate (`MS365_MCP_REQUIRE_CONFIRM`) refuses any write without `confirm: true`, which the app sends only after the card is confirmed.
+
+**What follows from this:**
+- **It is a community project, not Microsoft's, and it holds the Microsoft tokens.** It needs a security review before a company rollout, and upgrades must stay pinned to exact versions.
+- **The Artizent tenant may block the ready-made app.** If so, use our own registration (the Entra request below).
+- **The ready-made app only signs in with a code.** Its registration does not accept a browser redirect to this machine ("redirect_uri is not valid", seen on 2026-11-26 with a personal account). Browser sign-in arrives with our own registration.
+- **Token key on disk.** npm skipped keytar's native build, so the server keeps its token key in a file next to its cache instead of in the OS keychain. A release build needs keytar built for Electron.
+
+**Needs sign-off:** using a third-party server for Microsoft 365, and the security review.
+
 ## Long-lead items
 
 These items take weeks and need someone with a budget or admin rights.
@@ -183,30 +206,31 @@ Things to know before buying:
 **Owner:** _(to be named)_
 **Filed on:** _(not yet)_
 
-**Why it is needed:** roadmap phase 2 (Teams, Outlook, To Do and OneDrive) signs users in through Microsoft Entra ID. Before anyone can connect Microsoft 365, IT has to register the app and approve it once.
+**Why it is needed:** roadmap phase 2 (Teams, Outlook, To Do and OneDrive) signs users in through Microsoft Entra ID. Development can use the Softeria server's ready-made app (decision 7), but a company rollout should use the company's own registration, set with `M365_CLIENT_ID`.
 
 **What to ask IT for:**
 - **Name:** Ticket Triage (desktop)
 - **Supported account types:** this organisation only (single tenant)
-- **Platform:** Mobile and desktop applications, with two redirect URIs:
-  - `http://localhost`, for sign-in through the system browser
-  - `ms-appx-web://Microsoft.AAD.BrokerPlugin/<client-id>`, for the Windows sign-in broker. Add this one after the app is created, because it needs the client ID.
-- **Allow public client flows:** Yes. The app ships no client secret.
+- **Platform:** Mobile and desktop applications, with the redirect URI `http://localhost`. Browser sign-in returns there (any port is allowed for localhost). The server's ready-made app lacks it, which is why `/connect` falls back to a code without our own registration.
+- **Allow public client flows:** Yes. Code sign-in needs it, and the app ships no client secret.
 - **Permissions:** delegated permissions only, so the app always acts as the signed-in user. No application permissions.
 - **Admin consent:** granted for the whole organisation, so users are not prompted one by one.
 
 | Delegated Microsoft Graph permission | Used for |
 |---|---|
 | `openid`, `profile`, `offline_access`, `User.Read` | Signing in and staying signed in |
-| `User.ReadBasic.All` | Matching people across tools by work email |
-| `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Send` | Posting to a Teams channel |
-| `ChatMessage.Send` | Sending a Teams chat message |
-| `Mail.Send` | Sending an email |
+| `People.Read` | Finding the people you work with by name, for recipients and attendees |
+| `Mail.Read` | Listing and reading the email you pick to make a ticket from |
+| `Mail.Send` | Sending an email or a reply |
 | `Calendars.ReadWrite` | Creating a meeting invite |
 | `Tasks.ReadWrite` | Creating a To Do task |
-| `Files.ReadWrite` | Sharing a OneDrive file with an organisation-scoped or person-scoped link |
+| `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Send` | Posting to a Teams channel |
+| `Chat.Read`, `ChatMessage.Send` | Reading the chat you pick to make a ticket from, and sending a chat message |
+
+These match what the app requests today (`npx @softeria/ms-365-mcp-server --list-permissions` with the app's tool list).
+Later features would add `Files.ReadWrite` (sharing a OneDrive file) and `ChannelMessage.Read.All` (making a ticket from a channel thread, which needs admin consent).
 
 **What to tell IT about the app:**
 - It acts only as the signed-in user.
 - Every message, email and invite is shown with its exact recipients and full text, and the user confirms it before it is sent.
-- Tokens stay on the machine, in MSAL's token cache, which Windows encrypts.
+- Tokens stay on the machine, in the server's encrypted token cache in the user's profile folder.
