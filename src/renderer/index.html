@@ -112,6 +112,7 @@
   .slip { border-top: 3px double var(--ink); padding-top: 12px; }
   .slip h4 { margin: 0 0 6px; font: 600 16px/22px var(--sans); }
   .props { margin: 0; }
+  .signin-code { font: 600 24px/1.3 var(--mono); letter-spacing: 0.08em; user-select: all; margin: 4px 0 2px; }
   .props .r { display: flex; align-items: baseline; gap: 14px; padding: 7px 0; border-bottom: 1px dotted var(--rule-2); }
   .props .r:last-child { border-bottom: 0; }
   .props dt { width: 104px; flex: none; font: 400 12px/22px var(--mono); text-transform: lowercase; color: var(--ink-3); }
@@ -262,7 +263,33 @@ function render(m) {
   else if (m.type === 'question') renderQuestion(m.question);
   else if (m.type === 'card') renderCard(m);
   else if (m.type === 'result') renderResult(m);
+  else if (m.type === 'signin') renderSignin(m);
 }
+
+function copyText(t) {
+  if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {});
+}
+
+// A sign-in in progress: the service's page is in the browser (or a code to enter there). The window then
+// waits for the core to report the result; it may be hidden meanwhile and shows the result when reopened.
+function renderSignin(m) {
+  clearQuestion();
+  const box = el('div', { class: 'slip' }, el('h4', { text: 'Sign in to ' + m.service }), el('div', { class: 'say', text: m.text }),
+    m.code ? el('div', { class: 'signin-code', text: m.code }) : null);
+  const row = el('div', { class: 'actions', style: 'margin-top:10px' });
+  if (m.url) row.append(el('button', { class: 'btn primary', type: 'button', text: m.code ? 'Copy code and open the page' : 'Open the sign-in page',
+    onclick: () => { if (m.code) copyText(m.code); window.open(m.url, '_blank', 'noopener'); } }));
+  row.append(el('button', { class: 'btn quiet', type: 'button', text: 'Cancel', onclick: () => {
+    box.remove();
+    transport.send({ type: 'cancel' }).then(msgs => { if (Array.isArray(msgs)) msgs.forEach(render); });
+  } }));
+  box.append(row);
+  add(box);
+  setTimeout(() => send({ type: 'wait' }).then(() => box.remove()), 0);
+}
+
+// Lets the tray start a command (e.g. Connect… runs /connect) as if it had been typed.
+window.runCommand = text => follow(text);
 
 function renderDraft(m) {
   if (draftEl) draftEl.remove();

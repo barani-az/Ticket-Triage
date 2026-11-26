@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, Tray } from 'electron';
 import type { UiToCore } from '../core/session.js';
 import { createApp, type App } from '../server/app.js';
 import { recordDemo } from './demo.js';
@@ -135,7 +135,6 @@ function trayIcon() {
 function buildTray() {
   tray = new Tray(trayIcon());
   const refresh = () => {
-    const hasRovo = core?.connections.some((c) => c.id === 'rovo');
     tray!.setToolTip(`AI Task Assistant (${hotkeyLabel})`);
     tray!.setContextMenu(
       Menu.buildFromTemplate([
@@ -149,22 +148,13 @@ function buildTray() {
             saveSettings();
           },
         },
-        ...(hasRovo
-          ? []
-          : [
-              {
-                label: 'Connect Atlassian Rovo…',
-                click: async () => {
-                  try {
-                    await core!.addRovo();
-                    tray!.displayBalloon({ title: 'Atlassian Rovo', content: 'Connected.' });
-                  } catch (e) {
-                    tray!.displayBalloon({ title: 'Atlassian Rovo', content: `Could not connect: ${(e as Error).message}` });
-                  }
-                  refresh();
-                },
-              },
-            ]),
+        {
+          label: 'Connect…',
+          click: () => {
+            showWindow();
+            void win?.webContents.executeJavaScript('window.runCommand && window.runCommand("/connect")');
+          },
+        },
         { type: 'separator' },
         { label: 'Quit', click: () => app.quit() },
       ]),
@@ -175,10 +165,16 @@ function buildTray() {
 }
 
 function wireIpc() {
-  const allowed = new Set(['submit', 'answer', 'stop', 'confirm', 'cancel', 'fallback']);
+  const allowed = new Set(['submit', 'answer', 'stop', 'confirm', 'cancel', 'fallback', 'wait']);
   ipcMain.handle('assistant:message', async (_e, msg: UiToCore) => {
     if (!msg || typeof msg !== 'object' || !allowed.has(msg.type)) return [{ type: 'error', message: 'Unknown message.' }];
-    return core!.session.handle(msg);
+    const out = await core!.session.handle(msg);
+    // A sign-in usually finishes while the window is hidden behind the browser: say so.
+    const done = out.find((m) => m.type === 'result' && m.stamp === 'Connected');
+    if (done && done.type === 'result' && !win?.isVisible() && Notification.isSupported()) {
+      new Notification({ title: 'Connected', body: done.text }).show();
+    }
+    return out;
   });
   ipcMain.handle('assistant:connections', () => core!.describe());
   ipcMain.handle('assistant:audit', () => core!.audit.list());

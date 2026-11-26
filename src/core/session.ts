@@ -14,7 +14,9 @@ export type UiToCore =
   | { type: 'stop' }
   | { type: 'confirm' }
   | { type: 'cancel' }
-  | { type: 'fallback'; option: 'answer-one' | 'save-draft' };
+  | { type: 'fallback'; option: 'answer-one' | 'save-draft' }
+  /** Sent by the window right after a sign-in card: resolves when the user has finished signing in. */
+  | { type: 'wait' };
 
 export type CoreToUi =
   | { type: 'info'; text: string }
@@ -23,14 +25,57 @@ export type CoreToUi =
   | { type: 'draft'; connection: string; rows: { field: string; value: string; assumed: boolean }[] }
   | { type: 'card'; card: ConfirmationCard; canConfirm: boolean; unresolved: string[]; options: string[]; errors: string[] }
   | { type: 'result'; ok: boolean; text: string; url?: string; stamp?: string; linkText?: string; suggestions?: string[] }
+  | { type: 'signin'; tool: ConnectTool; service: string; how: 'browser' | 'code'; text: string; url?: string; code?: string }
   | { type: 'error'; message: string };
+
+/** The tools /connect can sign in to. */
+export type ConnectTool = 'm365' | 'jira';
+
+export interface ToolStatus {
+  tool: ConnectTool;
+  connected: boolean;
+  /** e.g. "connected as priya@contoso.com", "not connected", "needs sign-in again". */
+  detail: string;
+}
+
+/** How a sign-in goes on: the service's page opens in the browser, or the user enters a code there. `ready`: already signed in. */
+export type SignInStart = { how: 'browser'; url?: string } | { how: 'code'; url: string; code: string } | { how: 'ready' };
+
+/** Signing in is the app's job (it opens browsers and starts servers); the session only drives the conversation. */
+export interface ConnectHooks {
+  status(): Promise<ToolStatus[]>;
+  start(tool: ConnectTool, opts: { work?: boolean; deviceCode?: boolean }): Promise<SignInStart>;
+  /** Resolves with who is now connected, once the user has finished signing in. */
+  finish(tool: ConnectTool): Promise<string>;
+  cancel(tool: ConnectTool): void;
+}
+
+const SERVICE: Record<ConnectTool, { name: string; owner: string }> = {
+  m365: { name: 'Microsoft 365', owner: 'Microsoft' },
+  jira: { name: 'Jira Cloud', owner: 'Atlassian' },
+};
+
+/** Sign-in errors in plain words. The raw codes (AADSTS…) mean nothing to most people. */
+export function signInError(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  if (/AADSTS(65001|90094|90095)|admin (approval|consent)|need(s)? admin/i.test(m)) {
+    return 'Your organisation needs an admin to approve this app before you can connect. Ask IT to approve it (the request is in docs/decisions.md), then try again.';
+  }
+  if (/AADSTS(50020|700016|50194)/i.test(m)) return "This account can't sign in to this app. Try the other account type, or ask IT for the company's own app registration.";
+  if (/access_denied|declined|denied/i.test(m)) return 'Access was not approved, so nothing was connected.';
+  if (/cancel/i.test(m)) return 'Sign-in was cancelled. Nothing was connected.';
+  if (/timed? ?out|expired/i.test(m)) return 'Sign-in timed out. Run /connect to try again.';
+  return `Could not connect: ${m}`;
+}
 
 type State =
   | { kind: 'idle' }
   | { kind: 'tool'; request: string; understanding: Understanding; candidates: Candidate[]; source?: SourceContent }
   | { kind: 'source'; request: string; from: SourceRequest['kind']; conn: Connection; candidates: Candidate[] }
   | { kind: 'asking'; request: string; conn: Connection; qn: Questionnaire; source?: SourceContent }
-  | { kind: 'confirming'; request: string; conn: Connection; qn: Questionnaire; plan: Plan; unresolved: string[]; source?: SourceContent };
+  | { kind: 'confirming'; request: string; conn: Connection; qn: Questionnaire; plan: Plan; unresolved: string[]; source?: SourceContent }
+  | { kind: 'connect'; step: 'tool' | 'account' | 'retry'; tool?: ConnectTool; work?: boolean; choices: Candidate[] }
+  | { kind: 'signing-in'; tool: ConnectTool; work?: boolean; how: 'browser' | 'code' };
 
 export interface SessionDeps {
   connections: Connection[];
@@ -46,6 +91,8 @@ export interface SessionDeps {
    * Connections marked `confirmAlways` (Microsoft 365: messages can't be unsent) always show the card.
    */
   autoCreate?: () => boolean;
+  /** Sign-in for /connect. Without it, /connect says it is not available. */
+  connect?: ConnectHooks;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -127,8 +174,11 @@ export class Session {
         case 'confirm':
           return await this.confirm();
         case 'cancel':
+          if (this.state.kind === 'signing-in') this.deps.connect?.cancel(this.state.tool);
           this.state = { kind: 'idle' };
           return [{ type: 'info', text: 'Cancelled. Nothing was changed.' }];
+        case 'wait':
+          return await this.finishSignIn();
         case 'fallback':
           return await this.fallback(msg.option);
       }
@@ -138,6 +188,9 @@ export class Session {
   }
 
   private async submit(text: string): Promise<CoreToUi[]> {
+    // Commands are handled here and never reach the LLM.
+    const command = text.trim().match(/^\/(\w+)/)?.[1]?.toLowerCase();
+    if (command) return command === 'connect' ? this.connectMenu() : [{ type: 'info', text: `Unknown command /${command}. Try /connect.` }];
     const advice = await this.consult(text);
     if (advice) {
       const said: CoreToUi = { type: 'assistant', text: advice.reply, reasoning: advice.reasoning, suggestions: advice.suggestions };
@@ -251,6 +304,12 @@ export class Session {
 
   private async answer(msg: { choiceId?: string; text?: string }): Promise<CoreToUi[]> {
     const s = this.state;
+    if (s.kind === 'connect') {
+      const m = matchAnswer(msg.text ?? '', s.choices);
+      const chosen = s.choices.find((c) => c.id === msg.choiceId) ?? (m.kind === 'one' ? m.matches[0] : undefined);
+      if (!chosen) return [{ type: 'info', text: 'Please pick one of the listed options.' }];
+      return this.onConnectChoice(s, chosen.id);
+    }
     if (s.kind === 'tool' || s.kind === 'source') {
       const chosen =
         s.candidates.find((c) => c.id === msg.choiceId) ??
@@ -331,6 +390,92 @@ export class Session {
     if (acts.includes('email')) out.push(`Email someone about ${key}`);
     if (acts.includes('task')) out.push(`Remind me to follow up on ${key} on Friday`);
     return out.slice(0, 3);
+  }
+
+  /** /connect: which tool, with each one's live status. */
+  private async connectMenu(): Promise<CoreToUi[]> {
+    const hooks = this.deps.connect;
+    if (!hooks) return [{ type: 'info', text: 'Connecting tools is not available here.' }];
+    const status = await hooks.status();
+    const detail = (t: ConnectTool) => status.find((x) => x.tool === t)?.detail ?? 'not connected';
+    const choices: Candidate[] = [
+      { id: 'm365', label: SERVICE.m365.name, detail: detail('m365') },
+      { id: 'jira', label: SERVICE.jira.name, detail: detail('jira') },
+      { id: 'other', label: 'Other connectors', detail: 'coming later' },
+    ];
+    this.state = { kind: 'connect', step: 'tool', choices };
+    return [this.pickQuestion('connect', '__connect', 'Connect which tool?', choices)];
+  }
+
+  private async onConnectChoice(s: Extract<State, { kind: 'connect' }>, id: string): Promise<CoreToUi[]> {
+    if (s.step === 'tool') {
+      if (id === 'other') {
+        this.state = { kind: 'idle' };
+        return [{ type: 'info', text: 'Other connectors are coming in a later version.' }];
+      }
+      return id === 'm365' ? this.askAccount() : this.beginSignIn('jira', {});
+    }
+    if (s.step === 'account') return this.beginSignIn('m365', { work: id === 'work' });
+    // step 'retry', after a failed sign-in
+    if (id === 'code' || id === 'browser') return this.beginSignIn(s.tool!, { work: s.work, deviceCode: id === 'code' });
+    this.state = { kind: 'idle' };
+    return [{ type: 'info', text: 'Cancelled. Nothing was changed.' }];
+  }
+
+  private askAccount(): CoreToUi[] {
+    const choices: Candidate[] = [
+      { id: 'work', label: 'Work or school account', detail: 'Outlook, calendar, To Do and Teams' },
+      { id: 'personal', label: 'Personal account', detail: 'Outlook.com or Hotmail, no Teams' },
+    ];
+    this.state = { kind: 'connect', step: 'account', choices };
+    return [this.pickQuestion('account', '__connect', 'Which kind of Microsoft account?', choices)];
+  }
+
+  private async beginSignIn(tool: ConnectTool, opts: { work?: boolean; deviceCode?: boolean }): Promise<CoreToUi[]> {
+    let start: SignInStart;
+    try {
+      start = await this.deps.connect!.start(tool, opts);
+    } catch (e) {
+      this.state = { kind: 'idle' };
+      return [{ type: 'result', ok: false, text: signInError(e) }];
+    }
+    this.state = { kind: 'signing-in', tool, work: opts.work, how: start.how === 'code' ? 'code' : 'browser' };
+    if (start.how === 'ready') return this.finishSignIn();
+    const { name, owner } = SERVICE[tool];
+    const text =
+      start.how === 'code'
+        ? `Enter this code on ${owner}'s sign-in page. This window updates when you're done.`
+        : `Your browser is opening ${owner}'s sign-in page. Sign in and approve access there; this window updates when you're done.`;
+    return [{ type: 'signin', tool, service: name, how: start.how, text, url: start.url, ...(start.how === 'code' ? { code: start.code } : {}) }];
+  }
+
+  private async finishSignIn(): Promise<CoreToUi[]> {
+    const s = this.state;
+    if (s.kind !== 'signing-in') return [];
+    try {
+      const who = await this.deps.connect!.finish(s.tool);
+      if (this.state !== s) return []; // cancelled meanwhile
+      this.state = { kind: 'idle' };
+      this.projects = undefined; // a new connection brings new projects
+      return [{ type: 'result', ok: true, stamp: 'Connected', text: who }];
+    } catch (e) {
+      if (this.state !== s) return [];
+      const failed: CoreToUi = { type: 'result', ok: false, text: signInError(e) };
+      if (/cancel/i.test(String((e as Error)?.message))) {
+        this.state = { kind: 'idle' };
+        return [failed];
+      }
+      // Offer another way in: a code works when the browser sign-in can't (Microsoft 365 only).
+      const cancel = { id: 'cancel', label: 'Cancel' };
+      const choices: Candidate[] =
+        s.tool !== 'm365'
+          ? [{ id: 'browser', label: 'Try again' }, cancel]
+          : s.how === 'code'
+            ? [{ id: 'code', label: 'Get a new code' }, { id: 'browser', label: 'Use the browser instead' }, cancel]
+            : [{ id: 'code', label: 'Sign in with a code instead' }, { id: 'browser', label: 'Try the browser again' }, cancel];
+      this.state = { kind: 'connect', step: 'retry', tool: s.tool, work: s.work, choices };
+      return [failed, this.pickQuestion('retry', '__connect', 'Try again?', choices)];
+    }
   }
 
   private async fallback(option: 'answer-one' | 'save-draft'): Promise<CoreToUi[]> {
