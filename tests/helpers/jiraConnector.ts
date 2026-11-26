@@ -1,6 +1,6 @@
-import type { Candidate, ExecResult, JsonSchema, PlanStep } from '../types.js';
-import { timed } from '../log.js';
-import type { Connector } from './contract.js';
+import type { Candidate, ExecResult, JsonSchema, PlanStep } from '../../src/core/types.js';
+import { timed } from '../../src/core/log.js';
+import type { Connector } from '../../src/core/connectors/contract.js';
 
 export interface JiraConfig {
   baseUrl: string;
@@ -20,6 +20,7 @@ class JiraError extends Error {
 
 const SKIPPED_FIELDS = new Set(['project', 'issuetype', 'reporter']);
 
+/** Jira's REST API, used by the tests against the test Jira (jiraMock.ts). Not part of the app. */
 export class JiraConnector implements Connector {
   manifest = {
     type: 'jira',

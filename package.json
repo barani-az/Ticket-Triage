@@ -11,12 +11,10 @@
     "smoke:desktop": "node scripts/build.mjs && node scripts/smoke.mjs",
     "web": "tsx src/server/main.ts",
     "demo": "tsx src/server/main.ts",
-    "mock-jira": "tsx src/mock/jiraMockMain.ts",
     "mcp:discover": "tsx src/mcp/discover.ts",
     "verify:rovo": "tsx src/mcp/verifyRovo.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "demo:video": "node scripts/build.mjs && node scripts/record.mjs",
     "demo:video:jira": "node scripts/build.mjs && node scripts/record.mjs --rovo --jira",
     "demo:jira-login": "node scripts/record.mjs --login",
     "m365:login": "tsx src/mcp/ms365Login.ts"

@@ -4,11 +4,11 @@ import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { parseAdvice, toUnderstanding } from '../src/core/advisor.js';
 import type { Connection } from '../src/core/connectors/contract.js';
-import { JiraConnector } from '../src/core/connectors/jira.js';
+import { JiraConnector } from './helpers/jiraConnector.js';
 import { AuditLog } from '../src/core/executor.js';
 import type { LlmCall, LlmGateway } from '../src/core/llm.js';
 import { Session, type CoreToUi } from '../src/core/session.js';
-import { startMockJira } from '../src/mock/jiraMock.js';
+import { startMockJira } from './helpers/jiraMock.js';
 
 let mock: Awaited<ReturnType<typeof startMockJira>>;
 let connections: Connection[];

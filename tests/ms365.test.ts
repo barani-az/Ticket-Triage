@@ -5,12 +5,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection } from '../src/core/connectors/contract.js';
-import { JiraConnector } from '../src/core/connectors/jira.js';
+import { JiraConnector } from './helpers/jiraConnector.js';
 import { Ms365Connector } from '../src/core/connectors/ms365.js';
 import { AuditLog } from '../src/core/executor.js';
 import type { LlmCall, LlmGateway } from '../src/core/llm.js';
 import { Session, type CoreToUi } from '../src/core/session.js';
-import { startMockJira } from '../src/mock/jiraMock.js';
+import { startMockJira } from './helpers/jiraMock.js';
 import { createFakeMs365, type FakeMs365State } from './helpers/fakeMs365.js';
 
 let mock: Awaited<ReturnType<typeof startMockJira>>;

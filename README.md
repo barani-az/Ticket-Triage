@@ -2,7 +2,7 @@
 
 A small, runnable slice of the design in `docs/superpowers/plans/`: type a task, get asked only
 for what is missing (with real choices), confirm on a card, and the ticket is created.
-It runs fully offline against a mock Jira. No account or API key is needed.
+Tickets go to your Jira Cloud site through Atlassian's Rovo MCP server: type `/connect` and sign in.
 
 ## Desktop app (the main way to use it)
 
@@ -27,15 +27,14 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
   confirmed" rule, so keep it in mind when pointing the app at a real Jira.
 - **Connect your tools:** type `/connect` in the window, or pick *Connect…* in the tray menu (see
   [Connecting tools](#connecting-tools-connect) below).
-- **Windows PowerShell:** set variables on their own line (`$env:ROVO_ONLY='1'`), because
-  `ROVO_ONLY=1 npm run ...` only works in bash. Or put them in `.env`.
+- **Windows PowerShell:** set variables on their own line (`$env:LOG='debug'`), because
+  `LOG=debug npm run ...` only works in bash. Or put them in `.env`.
 - **Reasoning (needs the Gemini key):** it answers questions, asks one clarifying question when a
   request is vague, or drafts a ticket and says why. Jira's own data still validates every value, and
   a project it picked itself is confirmed with you first.
 - **History:** the clock button in the bar, `Ctrl+H`, or typing `history` lists every ticket you have
   created from the app, newest first and grouped by day. Enter or a click opens it in Jira. It reads
-  the local audit log (`data/audit.jsonl`). Entries from the built-in mock Jira repeat keys (it resets
-  on each launch) and their links no longer open.
+  the local audit log (`data/audit.jsonl`).
 - **Conversation:** the chat stays on screen. While a draft is open, tell it what to change ("make it
   highest", "add that it started yesterday") or ask a question; say **create it** or **cancel**. Those
   two are matched by fixed rules, not by the model, so the AI cannot trigger a write. A draft that is
@@ -53,24 +52,16 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
 
 ```bash
 npm run web         # http://127.0.0.1:4000 (same chat page, served over HTTP)
-npm test            # 90 tests
+npm test            # the tests run against a test Jira in tests/helpers, no account needed
 ```
-
-The demo starts a mock Jira (on a free port; set `MOCK_JIRA_PORT` to pin one) and two connections to it:
-
-| Connection | What it shows |
-|---|---|
-| **Company Jira** | The Jira connector: schema from `createmeta`, lookups for projects, people and components, validation by Jira itself |
-| **Company Jira (MCP)** | A custom MCP connection: our MCP server (`src/mcp`) is spawned over stdio, and the assistant builds its questions from the tool's input schema. Marked "basic": no lookups |
-
-Route to the MCP one with `@jira-mcp ...` or the "Which tool?" question.
 
 ## What to try
 
-- `Create a bug for the login page crashing on Safari, high priority, frontend team`: asks only for the project
-- `Create a story in WEB for dark mode, assign to Arjun`: two Arjuns, so it asks and never guesses
-- `Create a bug in WEB for checkout error, urgent`: "Urgent" is not a priority here, so it lists the real ones
-- Press **Stop asking** on a bug: priority is filled from Jira's default and labelled *assumed*; the required component has no real value, so the card cannot be confirmed (answer it, or save a draft)
+With Jira connected (`/connect`, then *Jira Cloud*):
+
+- `Create a bug for the login page crashing on Safari, high priority`: asks only for what is missing, with your site's real projects and issue types
+- `Create a task in <PROJECT KEY> for checkout error, urgent`: if "Urgent" is not one of your priorities, it lists the real ones
+- Assign to a name two people share: it asks and never guesses
 
 ## Optional LLM (Gemini)
 
@@ -100,7 +91,7 @@ It opens your browser to sign in and approve access, then saves every tool's nam
 `data/rovo-tools.json` (tool definitions only, no tokens). OAuth tokens are stored in
 `data/rovo-oauth.json`; both files are git-ignored, and the token file must never be shared.
 
-Once signed in, `npm run demo` adds a third connection, **Atlassian Rovo (live)**, wired through
+Once signed in (with `/connect` or the command above), the app has the connection **Atlassian Rovo (live)**, wired through
 `src/core/connectors/rovo.ts`. It uses Rovo's lookup tools (`listJiraProjects`,
 `listJiraProjectIssueTypesMetadata`, `getJiraIssueTypeMetaWithFields`, `listJiraProjectComponents`,
 `lookupJiraAccountId`) so questions get real choices, and `createJiraIssue` to write. The card shows
@@ -108,7 +99,6 @@ Once signed in, `npm run demo` adds a third connection, **Atlassian Rovo (live)*
 
 ```bash
 npm run verify:rovo               # read-only check against your site
-ROVO_ONLY=1 npm run demo          # only the live connection, no mock Jira
 ROVO_READONLY=1 npm run demo      # live connection that refuses all writes
 ```
 
@@ -198,16 +188,6 @@ because reading channel messages needs admin consent; chats work. The server's t
 file next to its cache because npm skipped keytar's native build; the cache lives in the server's own
 folder (`~/Library/Application Support/ms-365-mcp-server/` on macOS), outside this repo.
 
-## Use a real Jira (untested)
-
-```bash
-JIRA_BASE_URL=https://jira.company.com JIRA_FLAVOR=datacenter JIRA_TOKEN=<PAT> npm run demo
-# Cloud: JIRA_FLAVOR=cloud JIRA_EMAIL=you@company.com JIRA_TOKEN=<API token>
-```
-
-Only the mock has been exercised. Real Jira may differ, notably Cloud has deprecated the classic
-`createmeta` endpoint this demo uses.
-
 ## Not in this demo (see the plan)
 
 Electron shell, hotkey and tray; Microsoft 365; JEV as the decision policy; editable draft fields;
@@ -217,9 +197,8 @@ backoff; credential vault (the token comes from env vars); SQLite (audit is a JS
 ## Layout
 
 ```
-src/core/        connectors (jira, mcp), router, understand, questionnaire, executor, session
-src/mcp/         the Jira MCP server
-src/mock/        mock Jira
-src/server/      web server and UI
-tests/           connector, MCP, session and LLM tests
+src/core/        connectors (rovo, ms365, mcp), router, understand, questionnaire, executor, session
+src/mcp/         sign-in and the Rovo and Microsoft 365 server connections
+src/server/      app wiring, /connect sign-in, web server
+tests/           connector, MCP, session and LLM tests; tests/helpers has the test Jira and fake servers
 ```

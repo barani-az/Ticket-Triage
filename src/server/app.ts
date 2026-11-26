@@ -1,10 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Connection } from '../core/connectors/contract.js';
-import { JiraConnector } from '../core/connectors/jira.js';
-import { McpConnector } from '../core/connectors/mcp.js';
 import { ROVO_URL, RovoJiraConnector } from '../core/connectors/rovo.js';
 import { AuditLog } from '../core/executor.js';
 import { gatewayFromEnv } from '../core/llm.js';
@@ -13,15 +9,12 @@ import { Session } from '../core/session.js';
 import { connectMs365, followMs365Log } from '../mcp/ms365Server.js';
 import { createConnect } from './connect.js';
 import { connectRemoteMcp } from '../mcp/remote.js';
-import { startMockJira } from '../mock/jiraMock.js';
 
 export interface AppOptions {
   /** Where sign-in, audit and other local data live. */
   dataDir: string;
-  /** Project root; needed only to spawn our own MCP server over stdio. */
+  /** Project root, to start the Microsoft 365 server from node_modules (default: the current directory). */
   root?: string;
-  /** Start our own Jira MCP server as a child process (web demo only). */
-  stdioMcp?: boolean;
   /** Create complete drafts without the confirm click. Read on every request. */
   autoCreate?: () => boolean;
 }
@@ -29,52 +22,14 @@ export interface AppOptions {
 export type App = Awaited<ReturnType<typeof createApp>>;
 
 /**
- * Wires the connections. By default: the mock Jira (direct, plus our MCP server if `stdioMcp`),
- * and Atlassian's live Rovo connection when a saved sign-in exists. ROVO_ONLY=1 drops the mocks.
+ * Wires the connections: Atlassian Rovo (Jira) and Microsoft 365, each when /connect has signed in
+ * before. With neither, the app starts with no connections and asks the user to /connect.
  */
 export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   configureLog(env.LOG);
   log('app', `starting (data in ${opts.dataDir})`);
   const connections: Connection[] = [];
-  let baseUrl = env.JIRA_BASE_URL ?? '';
-  let closeMock: (() => Promise<void>) | undefined;
   const rovoStore = path.join(opts.dataDir, 'rovo-oauth.json');
-
-  if (env.ROVO_ONLY !== '1') {
-    if (!baseUrl) {
-      // Port 0 = any free port, so a second copy of the app (or anything on 4010) cannot block startup.
-      const mock = await startMockJira(Number(env.MOCK_JIRA_PORT ?? 0));
-      baseUrl = mock.baseUrl;
-      closeMock = mock.close;
-    }
-    const flavor = env.JIRA_FLAVOR === 'datacenter' ? 'datacenter' : 'cloud';
-    const token = env.JIRA_TOKEN ?? 'demo-token';
-    connections.push({
-      id: 'jira',
-      name: 'Company Jira',
-      readOnly: false,
-      connector: new JiraConnector({ baseUrl, flavor, email: env.JIRA_EMAIL, token }),
-    });
-
-    if (opts.stdioMcp && opts.root) {
-      const client = new Client({ name: 'assistant', version: '0.0.1' });
-      await client.connect(
-        new StdioClientTransport({
-          command: process.execPath,
-          args: ['--import', 'tsx', path.join(opts.root, 'src', 'mcp', 'jiraServerMain.ts')],
-          cwd: opts.root,
-          env: {
-            ...(process.env as Record<string, string>),
-            JIRA_BASE_URL: baseUrl,
-            JIRA_FLAVOR: flavor,
-            JIRA_TOKEN: token,
-            ...(env.JIRA_EMAIL ? { JIRA_EMAIL: env.JIRA_EMAIL } : {}),
-          },
-        }),
-      );
-      connections.push({ id: 'jira-mcp', name: 'Company Jira (MCP)', readOnly: false, connector: new McpConnector(client) });
-    }
-  }
 
   /** Connect to Atlassian Rovo. Interactive opens the browser; otherwise a saved sign-in is required. */
   async function connectRovo(interactive: boolean, extra: { onUrl?: (url: string) => void; signal?: AbortSignal } = {}): Promise<Connection> {
@@ -147,8 +102,6 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
   if (m365Error) log('app', `Microsoft 365 not connected: ${m365Error}`);
 
   return {
-    baseUrl: baseUrl || 'https://mcp.atlassian.com',
-    usesMock: Boolean(closeMock),
     session,
     connections,
     audit,
@@ -177,7 +130,6 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
     async close() {
       stopLog?.();
       await Promise.all(connections.map((c) => c.connector.close?.()));
-      await closeMock?.();
     },
   };
 }

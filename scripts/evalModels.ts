@@ -54,7 +54,7 @@ const models = process.argv.length > 2 ? process.argv.slice(2) : GEMINI_MODELS;
 
 const ctx: AdvisorContext = {
   today: new Date().toISOString().slice(0, 10),
-  connections: ['Company Jira'],
+  connections: ['Atlassian Rovo (live)'],
   projects: ['KAN: My Software Team', 'WEB: Website', 'OPS: IT Operations'],
   recent: ['KAN-7 Update the onboarding checklist'],
 };

@@ -82,6 +82,8 @@ const SERVICE: Record<ConnectTool, { name: string; owner: string }> = {
   jira: { name: 'Jira Cloud', owner: 'Atlassian' },
 };
 
+const NO_JIRA: CoreToUi = { type: 'assistant', text: "Jira isn't connected yet. Run /connect to sign in, then ask again.", suggestions: ['/connect'] };
+
 // When Microsoft 365 can't do what was asked, these replace the model's reply, with a next step to click.
 const NOT_CONNECTED: CoreToUi = {
   type: 'assistant',
@@ -361,13 +363,13 @@ export class Session {
   /** A ticket goes to a ticket tool, never to Microsoft 365. */
   private async toTicketTool(request: string, understanding: Understanding, source?: SourceContent): Promise<CoreToUi[]> {
     const tools = this.deps.connections.filter((c) => c.connector.manifest.type !== 'ms365');
-    if (!tools.length) return [{ type: 'info', text: 'No ticket tool is connected.' }];
     const routed = route(request, tools);
     if ('ask' in routed) return this.askWhichTool(request, understanding, routed.ask, source);
     return this.startFlow(request, routed.connection, understanding, source);
   }
 
   private askWhichTool(request: string, understanding: Understanding, candidates: Candidate[], source?: SourceContent): CoreToUi[] {
+    if (!candidates.length) return [NO_JIRA];
     this.state = { kind: 'tool', request, understanding, candidates, source };
     return [this.pickQuestion('tool', '__tool', 'Which tool should this go to?', candidates)];
   }

@@ -1,10 +1,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { JiraConnector } from '../src/core/connectors/jira.js';
+import { JiraConnector } from './helpers/jiraConnector.js';
 import { McpConnector } from '../src/core/connectors/mcp.js';
-import { createJiraMcpServer } from '../src/mcp/jiraServer.js';
-import { startMockJira } from '../src/mock/jiraMock.js';
+import { createJiraMcpServer } from './helpers/jiraServer.js';
+import { startMockJira } from './helpers/jiraMock.js';
 
 let mock: Awaited<ReturnType<typeof startMockJira>>;
 let mcp: McpConnector;
