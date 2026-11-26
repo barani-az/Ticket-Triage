@@ -95,3 +95,48 @@ describe('images', () => {
     expect(bodies[1].messages[1].content).toBe('plain');
   });
 });
+
+describe('waiting limits', () => {
+  const failing = (name: string, calls: string[], message = 'LLM request failed: 503 busy') => ({
+    extractJson: async () => {
+      calls.push(name);
+      throw new Error(message);
+    },
+  });
+  const working = (name: string, calls: string[]) => ({
+    extractJson: async () => {
+      calls.push(name);
+      return { from: name };
+    },
+  });
+
+  it('tries a model that just failed last, so later messages do not wait on it again', async () => {
+    const calls: string[] = [];
+    const gw = new FallbackGateway([failing('busy', calls), working('ok', calls)]);
+    await gw.extractJson({ system: '', user: '' });
+    await gw.extractJson({ system: '', user: '' });
+    expect(calls).toEqual(['busy', 'ok', 'ok']);
+  });
+
+  it('does not sideline a model for a rejected request', async () => {
+    const calls: string[] = [];
+    const gw = new FallbackGateway([failing('picky', calls, 'LLM request failed: 400 bad param'), working('ok', calls)]);
+    await gw.extractJson({ system: '', user: '' });
+    await gw.extractJson({ system: '', user: '' });
+    expect(calls).toEqual(['picky', 'ok', 'picky', 'ok']);
+  });
+
+  it('stops trying more models once the total time budget is spent', async () => {
+    const calls: string[] = [];
+    const slow = {
+      extractJson: async () => {
+        calls.push('slow');
+        await new Promise((r) => setTimeout(r, 40));
+        throw new Error('timeout');
+      },
+    };
+    const gw = new FallbackGateway([slow, working('never', calls)]);
+    await expect(gw.extractJson({ system: '', user: '', budgetMs: 20 })).rejects.toThrow('timeout');
+    expect(calls).toEqual(['slow']);
+  });
+});

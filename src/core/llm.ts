@@ -8,6 +8,8 @@ export interface LlmCall {
   timeoutMs?: number;
   /** Images for the model to look at, as data URLs (data:image/jpeg;base64,...). */
   images?: string[];
+  /** The most time all attempts together may take, so trying several models cannot add up to minutes. */
+  budgetMs?: number;
 }
 
 export interface LlmGateway {
@@ -70,16 +72,31 @@ export const GEMINI_OPENAI_URL = 'https://generativelanguage.googleapis.com/v1be
  */
 export const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash'];
 
+/** How long a model that just timed out or was overloaded is tried last instead of first. */
+const COOLDOWN_MS = 60_000;
+
 /** Try each gateway in order; a timeout, overload or missing model moves on to the next. */
 export class FallbackGateway implements LlmGateway {
+  private coolingUntil = new Map<LlmGateway, number>();
   constructor(private gateways: LlmGateway[]) {}
+
   async extractJson(opts: LlmCall): Promise<unknown> {
+    const deadline = opts.budgetMs ? Date.now() + opts.budgetMs : Infinity;
+    const cooling = (g: LlmGateway) => (this.coolingUntil.get(g) ?? 0) > Date.now();
+    // A model that just failed goes to the back, so every message does not wait on it again.
+    const order = [...this.gateways.filter((g) => !cooling(g)), ...this.gateways.filter(cooling)];
     let last: unknown;
-    for (const g of this.gateways) {
+    for (const g of order) {
+      const left = deadline - Date.now();
+      if (left <= 0) break;
       try {
-        return await g.extractJson(opts);
+        const result = await g.extractJson(Number.isFinite(left) ? { ...opts, timeoutMs: Math.min(opts.timeoutMs ?? left, left) } : opts);
+        this.coolingUntil.delete(g);
+        return result;
       } catch (e) {
         last = e;
+        // A rejected request (400) says nothing about the model's health.
+        if (!/failed: 400\b/.test((e as Error).message)) this.coolingUntil.set(g, Date.now() + COOLDOWN_MS);
       }
     }
     throw last ?? new Error('No LLM gateway configured.');

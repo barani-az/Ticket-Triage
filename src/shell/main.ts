@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, desktopCapturer, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, shell, Tray } from 'electron';
 import type { UiToCore } from '../core/session.js';
 import { createApp, type App } from '../server/app.js';
 import { recordDemo } from './demo.js';
@@ -243,6 +243,7 @@ async function smokeTest() {
   // window (plus a margin for its shadow) instead; only that crop is saved, never the whole screen.
   const shot = async (name: string) => {
     await wait(450); // let the window finish resizing and animating
+    if (process.env.SMOKE_NOSHOT === '1') return; // never crop the screen when something else may be on top
     let png: Buffer;
     try {
       const b = win!.getBounds();
@@ -322,6 +323,11 @@ async function smokeTest() {
     render({ type: 'card', canConfirm: true, unresolved: [], options: [], errors: [], card: { title: 'Create issue', connectionName: 'Company Jira', rows: [{ field: 'project', title: 'Project', value: 'Website', assumed: false }, { field: 'summary', title: 'Summary', value: '500 error on payment page (ERR-7731)', assumed: false }, { field: 'priority', title: 'Priority', value: 'Highest', assumed: false }], warnings: [] } });
   })()`);
   await shot('12-chat');
+
+  // While the assistant is working.
+  await run(`reset(); echo('it is an IT issue, my VPN keeps dropping'); render({ type: 'assistant', text: 'Can I take a screenshot of your screen to see what it shows?', action: 'screenshot' }); echo('yes, but first: it started this morning'); add(el('div', { class: 'typing' }, el('i'), el('i'), el('i')))`);
+  await shot('13-typing');
+  out.chatPlaceholder = await run('input.placeholder');
   console.log('SMOKE ' + JSON.stringify(out, null, 2));
 }
 
@@ -337,7 +343,15 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     if (SMOKE) settings.autoCreate = false;
     if (process.env.SMOKE_THEME === 'light' || process.env.SMOKE_THEME === 'dark') nativeTheme.themeSource = process.env.SMOKE_THEME;
-    core = await createApp(loadEnv(), { dataDir, autoCreate: () => settings.autoCreate });
+    try {
+      core = await createApp(loadEnv(), { dataDir, autoCreate: () => settings.autoCreate });
+    } catch (e) {
+      // With ROVO_ONLY there is no fallback connection, so say what is wrong instead of failing silently.
+      console.error((e as Error).message);
+      dialog.showErrorBox('AI Task Assistant could not start', (e as Error).message);
+      app.exit(1);
+      return;
+    }
     wireIpc();
     createWindow();
 

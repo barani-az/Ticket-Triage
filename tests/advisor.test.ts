@@ -63,6 +63,11 @@ describe('parseAdvice', () => {
     expect(a).toMatchObject({ intent: 'answer', reply: 'Use the self-service portal.' });
     expect(a?.suggestions).toEqual(['a', 'b', 'c']);
   });
+  it('tidies suggestions written as sentence continuations', () => {
+    const a = parseAdvice({ intent: 'answer', reply: 'ok', suggestions: [', assign this to me', ' - change priority', ', '] });
+    expect(a?.suggestions).toEqual(['Assign this to me', 'Change priority']);
+  });
+
   it('rejects an unknown intent, a missing reply, and a ticket with no title', () => {
     expect(parseAdvice({ intent: 'dance', reply: 'x' })).toBeUndefined();
     expect(parseAdvice({ intent: 'answer' })).toBeUndefined();
@@ -184,7 +189,7 @@ describe('session with the reasoning layer', () => {
   it('gives the model the real projects, so it can pick one instead of inventing it', async () => {
     const { gw, calls } = scripted([{ intent: 'answer', reply: 'ok', suggestions: [] }]);
     const session = new Session({ connections, audit, llm: gw });
-    await session.handle({ type: 'submit', text: 'hello' });
+    await session.handle({ type: 'submit', text: 'what can you do' });
     expect(calls[0].user).toContain('WEB: Website');
     expect(calls[0].user).toContain('APP: Mobile App');
   });
@@ -310,8 +315,29 @@ describe('talking about a draft', () => {
   it('forgets the conversation on "new"', async () => {
     const { session, calls } = await open([NAMED, { intent: 'answer', reply: 'ok', suggestions: [] }]);
     expect(await session.handle({ type: 'new' })).toEqual([]);
-    await session.handle({ type: 'submit', text: 'hello' });
+    await session.handle({ type: 'submit', text: 'what can you do' });
     expect(calls[1].user).not.toContain('Conversation so far');
     expect(calls[1].user).not.toContain('Draft ticket');
+  });
+});
+
+describe('answering without delay', () => {
+  it('replies to a greeting at once, without calling the model', async () => {
+    const { gw, calls } = scripted([BUG]);
+    const session = new Session({ connections, audit, llm: gw });
+    const msgs = await session.handle({ type: 'submit', text: 'hi' });
+    expect(assistantOf(msgs)?.text).toContain('Tell me what you need');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not repeat an overloaded round, but retries once if the request itself was rejected', async () => {
+    const busy = scripted([new Error('LLM request failed: 503 high demand')]);
+    await new Session({ connections, audit, llm: busy.gw }).handle({ type: 'submit', text: 'my vpn drops' });
+    expect(busy.calls.filter((c) => c.system.includes('reasoning layer'))).toHaveLength(1);
+
+    const picky = scripted([new Error('LLM request failed: 400 unknown field'), { intent: 'answer', reply: 'ok', suggestions: [] }]);
+    const msgs = await new Session({ connections, audit, llm: picky.gw }).handle({ type: 'submit', text: 'my vpn drops' });
+    expect(picky.calls).toHaveLength(2);
+    expect(assistantOf(msgs)?.text).toBe('ok');
   });
 });
