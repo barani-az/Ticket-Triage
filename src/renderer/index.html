@@ -279,10 +279,10 @@ function renderSignin(m) {
   const row = el('div', { class: 'actions', style: 'margin-top:10px' });
   if (m.url) row.append(el('button', { class: 'btn primary', type: 'button', text: m.code ? 'Copy code and open the page' : 'Open the sign-in page',
     onclick: () => { if (m.code) copyText(m.code); window.open(m.url, '_blank', 'noopener'); } }));
-  row.append(el('button', { class: 'btn quiet', type: 'button', text: 'Cancel', onclick: () => {
-    box.remove();
-    transport.send({ type: 'cancel' }).then(msgs => { if (Array.isArray(msgs)) msgs.forEach(render); });
-  } }));
+  // These run while the wait is still open, so they go straight to the core instead of through send().
+  const direct = msg => { box.remove(); transport.send(msg).then(msgs => { if (Array.isArray(msgs)) msgs.forEach(render); }); };
+  if (m.alt) row.append(el('button', { class: 'btn', type: 'button', text: m.alt.label, onclick: () => direct({ type: 'answer', choiceId: m.alt.id }) }));
+  row.append(el('button', { class: 'btn quiet', type: 'button', text: 'Cancel', onclick: () => direct({ type: 'cancel' }) }));
   box.append(row);
   add(box);
   setTimeout(() => send({ type: 'wait' }).then(() => box.remove()), 0);

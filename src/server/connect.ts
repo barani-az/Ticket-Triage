@@ -1,4 +1,5 @@
 import type { Connection } from '../core/connectors/contract.js';
+import type { Ms365Connector } from '../core/connectors/ms365.js';
 import type { ConnectHooks, ConnectTool, SignInStart, ToolStatus } from '../core/session.js';
 
 export interface ConnectDeps {
@@ -6,7 +7,14 @@ export interface ConnectDeps {
   connections: Connection[];
   /** Sign in to Atlassian in the browser (or reuse a saved sign-in) and return the Rovo connection. */
   rovo(opts: { onUrl: (url: string) => void; signal: AbortSignal }): Promise<Connection>;
+  /** Start the Microsoft 365 server for one account kind (not signed in yet). */
+  ms365(opts: { work: boolean; deviceCode: boolean }): Promise<Connection>;
+  /** How often to check whether a sign-in code has been entered (default 3 s). */
+  pollMs?: number;
 }
+
+const BROWSER_SIGN_IN_MS = 5 * 60_000;
+const CODE_SIGN_IN_MS = 15 * 60_000; // Microsoft's sign-in codes expire after about 15 minutes
 
 /** Which connection each /connect tool becomes. */
 const CONNECTION_ID: Record<ConnectTool, string> = { m365: 'm365', jira: 'rovo' };
@@ -38,6 +46,55 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
     return `${service} as ${st.actingAs}`;
   };
 
+  /** Microsoft 365: a fresh server for the chosen account kind, signed in by browser or by code. */
+  const startMs365 = async (work: boolean, deviceCode: boolean): Promise<SignInStart> => {
+    const conn = await d.ms365({ work, deviceCode });
+    const ms = conn.connector as Ms365Connector;
+    const ac = new AbortController();
+    const stop = () => {
+      ac.abort();
+      void conn.connector.close?.().catch(() => undefined); // ends its server, so a waiting login call fails
+    };
+    let start: SignInStart;
+    let signedIn: Promise<unknown>;
+    if ((await ms.testConnection()).ok) {
+      start = { how: 'ready' };
+      signedIn = Promise.resolve();
+    } else if (!deviceCode) {
+      // The server opens Microsoft's page itself; the login call returns once the user is back.
+      start = { how: 'browser' };
+      signedIn = ms.login(BROWSER_SIGN_IN_MS).then((r) => {
+        if (!('signedIn' in r)) throw new Error('Microsoft asked for a sign-in code instead.');
+      });
+    } else {
+      const r = await ms.login(60_000).catch((e) => {
+        stop();
+        throw e;
+      });
+      if ('signedIn' in r) {
+        start = { how: 'ready' };
+        signedIn = Promise.resolve();
+      } else {
+        start = { how: 'code', url: r.url, code: r.code };
+        signedIn = untilSignedIn(ms, ac.signal);
+      }
+    }
+    const done = signedIn.then(() => goLive(conn, 'Microsoft 365'));
+    done.catch(stop); // a failed or cancelled sign-in shuts its server down
+    pending.set('m365', { done, cancel: stop });
+    return start;
+  };
+
+  /** After a code is shown, the server polls Microsoft; this checks until the user has entered it. */
+  const untilSignedIn = async (ms: Ms365Connector, signal: AbortSignal) => {
+    for (const until = Date.now() + CODE_SIGN_IN_MS; Date.now() < until; ) {
+      if (signal.aborted) throw new Error('Sign-in cancelled.');
+      if ((await ms.testConnection()).ok) return;
+      await new Promise((r) => setTimeout(r, d.pollMs ?? 3000));
+    }
+    throw new Error('Sign-in timed out: the code expired.');
+  };
+
   return {
     async status() {
       return Promise.all(
@@ -51,9 +108,9 @@ export function createConnect(d: ConnectDeps): ConnectHooks {
       );
     },
 
-    async start(tool): Promise<SignInStart> {
+    async start(tool, opts): Promise<SignInStart> {
       pending.get(tool)?.cancel();
-      if (tool !== 'jira') throw new Error('Microsoft 365 sign-in is not set up yet.');
+      if (tool === 'm365') return startMs365(Boolean(opts.work), Boolean(opts.deviceCode));
       const ac = new AbortController();
       let showUrl!: (url: string) => void;
       const urlShown = new Promise<string>((r) => (showUrl = r));

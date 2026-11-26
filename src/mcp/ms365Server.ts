@@ -32,8 +32,12 @@ export function ms365Command(root: string, env: NodeJS.ProcessEnv, extra: string
   };
 }
 
-export async function connectMs365(root: string, env: NodeJS.ProcessEnv): Promise<Connection> {
-  const { command, args, env: childEnv, work } = ms365Command(root, env);
+/**
+ * Start the server for one account kind. Sign-in opens Microsoft's page in the browser and comes back to
+ * a local address (--auth-browser); with `deviceCode` it gives a code to enter on Microsoft's page instead.
+ */
+export async function connectMs365(root: string, env: NodeJS.ProcessEnv, opts: { deviceCode?: boolean } = {}): Promise<Connection> {
+  const { command, args, env: childEnv, work } = ms365Command(root, env, opts.deviceCode ? [] : ['--auth-browser']);
   const client = new Client({ name: 'ticket-triage', version: '0.0.1' });
   await client.connect(new StdioClientTransport({ command, args, env: { ...childEnv, SILENT: 'true' }, stderr: 'ignore' }));
   return {

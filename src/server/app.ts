@@ -104,7 +104,13 @@ export async function createApp(env: NodeJS.ProcessEnv, opts: AppOptions) {
 
   const audit = new AuditLog(path.join(opts.dataDir, 'audit.jsonl'));
   const llm = gatewayFromEnv(env);
-  const connect = createConnect({ connections, rovo: (o) => connectRovo(true, o) });
+  const connect = createConnect({
+    connections,
+    rovo: (o) => connectRovo(true, o),
+    // A personal account needs the "consumers" authority, or its sign-in stops working after about an hour.
+    ms365: ({ work, deviceCode }) =>
+      connectMs365(opts.root ?? process.cwd(), { ...env, M365_WORK: work ? '1' : '0', M365_TENANT_ID: env.M365_TENANT_ID ?? (work ? undefined : 'consumers') }, { deviceCode }),
+  });
   const session = new Session({ connections, audit, llm, autoCreate: opts.autoCreate, connect });
 
   return {

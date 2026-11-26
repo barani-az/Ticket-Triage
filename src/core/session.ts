@@ -25,7 +25,7 @@ export type CoreToUi =
   | { type: 'draft'; connection: string; rows: { field: string; value: string; assumed: boolean }[] }
   | { type: 'card'; card: ConfirmationCard; canConfirm: boolean; unresolved: string[]; options: string[]; errors: string[] }
   | { type: 'result'; ok: boolean; text: string; url?: string; stamp?: string; linkText?: string; suggestions?: string[] }
-  | { type: 'signin'; tool: ConnectTool; service: string; how: 'browser' | 'code'; text: string; url?: string; code?: string }
+  | { type: 'signin'; tool: ConnectTool; service: string; how: 'browser' | 'code'; text: string; url?: string; code?: string; alt?: Candidate }
   | { type: 'error'; message: string };
 
 /** The tools /connect can sign in to. */
@@ -304,6 +304,14 @@ export class Session {
 
   private async answer(msg: { choiceId?: string; text?: string }): Promise<CoreToUi[]> {
     const s = this.state;
+    if (s.kind === 'signing-in') {
+      // "Use a code instead" on the browser sign-in card.
+      if (s.tool === 'm365' && msg.choiceId === 'code') {
+        this.deps.connect?.cancel('m365');
+        return this.beginSignIn('m365', { work: s.work, deviceCode: true });
+      }
+      return [{ type: 'info', text: 'Finish signing in first, or press Cancel.' }];
+    }
     if (s.kind === 'connect') {
       const m = matchAnswer(msg.text ?? '', s.choices);
       const chosen = s.choices.find((c) => c.id === msg.choiceId) ?? (m.kind === 'one' ? m.matches[0] : undefined);
@@ -446,7 +454,9 @@ export class Session {
       start.how === 'code'
         ? `Enter this code on ${owner}'s sign-in page. This window updates when you're done.`
         : `Your browser is opening ${owner}'s sign-in page. Sign in and approve access there; this window updates when you're done.`;
-    return [{ type: 'signin', tool, service: name, how: start.how, text, url: start.url, ...(start.how === 'code' ? { code: start.code } : {}) }];
+    // If the browser sign-in doesn't work out (a blocked redirect, no browser), a code is the way in.
+    const alt = tool === 'm365' && start.how === 'browser' ? { id: 'code', label: 'Use a code instead' } : undefined;
+    return [{ type: 'signin', tool, service: name, how: start.how, text, url: start.url, ...(start.how === 'code' ? { code: start.code } : {}), ...(alt ? { alt } : {}) }];
   }
 
   private async finishSignIn(): Promise<CoreToUi[]> {

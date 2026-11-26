@@ -11,7 +11,7 @@ import { AuditLog } from '../src/core/executor.js';
 import type { LlmCall, LlmGateway } from '../src/core/llm.js';
 import { Session, type CoreToUi } from '../src/core/session.js';
 import { startMockJira } from '../src/mock/jiraMock.js';
-import { createFakeMs365 } from './helpers/fakeMs365.js';
+import { createFakeMs365, type FakeMs365State } from './helpers/fakeMs365.js';
 
 let mock: Awaited<ReturnType<typeof startMockJira>>;
 let jira: Connection;
@@ -22,8 +22,8 @@ beforeAll(async () => {
 });
 afterAll(() => mock.close());
 
-async function m365(work = true) {
-  const fake = createFakeMs365();
+async function m365(work = true, state?: FakeMs365State) {
+  const fake = createFakeMs365(state);
   const [a, b] = InMemoryTransport.createLinkedPair();
   await fake.server.connect(b);
   const client = new Client({ name: 'assistant', version: '0' });
@@ -123,6 +123,28 @@ describe('Ms365Connector', () => {
     const chat = await connector.read('chat', 'chat-1');
     expect(chat.title).toBe('Release war room');
     expect(chat.text).toBe('Arjun Rao: Checkout returns a 500 for card payments\nMeera Iyer: It started right after the 2.3 deploy');
+  });
+});
+
+describe('Ms365Connector sign-in', () => {
+  it('comes back signed in from the browser sign-in', async () => {
+    const { connector } = await m365(true, { signedIn: false, login: 'browser' });
+    expect(await connector.testConnection()).toMatchObject({ ok: false, needsReauth: true });
+    expect(await connector.login(1000)).toEqual({ signedIn: 'priya@contoso.example' });
+    expect(await connector.testConnection()).toEqual({ ok: true, actingAs: 'priya@contoso.example' });
+  });
+
+  it("reads the sign-in code and page out of Microsoft's device-code message", async () => {
+    const { connector } = await m365(true, { signedIn: false, login: 'code' });
+    expect(await connector.login(1000)).toEqual({ url: 'https://microsoft.com/devicelogin', code: 'FAKE12345' });
+  });
+
+  it("passes on the organisation's refusal, and signs out", async () => {
+    const blocked = (await m365(true, { signedIn: false, login: 'blocked' })).connector;
+    await expect(blocked.login(1000)).rejects.toThrow(/AADSTS65001/);
+    const { connector, fake } = await m365(true);
+    await connector.logout();
+    expect(fake.state.signedIn).toBe(false);
   });
 });
 

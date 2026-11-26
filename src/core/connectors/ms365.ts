@@ -11,6 +11,8 @@ import type { Connector, SourceContent } from './contract.js';
 export const MS365_VERSION = '0.191.0';
 
 const PERSONAL_TOOLS = [
+  'login',
+  'logout',
   'verify-login',
   'list-todo-task-lists',
   'create-todo-task',
@@ -76,12 +78,16 @@ export class Ms365Connector implements Connector {
     return ACTIONS.filter((a) => this.opts.work || !a.work).map((a) => a.id);
   }
 
-  private async call(name: string, args: Record<string, unknown> = {}): Promise<any> {
-    const res = await this.client.callTool({ name, arguments: args });
-    const text = ((res.content as { type: string; text?: string }[]) ?? [])
+  private static text(res: unknown) {
+    return (((res as { content?: unknown }).content as { type: string; text?: string }[]) ?? [])
       .filter((c) => c.type === 'text')
       .map((c) => c.text)
       .join('\n');
+  }
+
+  private async call(name: string, args: Record<string, unknown> = {}): Promise<any> {
+    const res = await this.client.callTool({ name, arguments: args });
+    const text = Ms365Connector.text(res);
     let parsed: any = text;
     try {
       parsed = JSON.parse(text);
@@ -93,6 +99,39 @@ export class Ms365Connector implements Connector {
       throw new Error(typeof e === 'string' ? e : e?.message ?? parsed?.message ?? (text || `${name} failed`));
     }
     return parsed;
+  }
+
+  /**
+   * Sign in. Started with --auth-browser, the server opens Microsoft's sign-in page and this returns once
+   * the user is back; otherwise it returns the code to enter on Microsoft's page (the server keeps polling).
+   */
+  async login(timeoutMs: number): Promise<{ signedIn: string } | { url: string; code: string }> {
+    const res = await this.client.callTool({ name: 'login', arguments: {} }, undefined, { timeout: timeoutMs });
+    const text = Ms365Connector.text(res);
+    let r: any;
+    try {
+      r = JSON.parse(text);
+    } catch {
+      throw new Error(text || 'Sign-in failed.');
+    }
+    if (r?.error === 'device_code_required') {
+      // e.g. "To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ABC123XYZ to authenticate."
+      const msg = String(r.message ?? '');
+      const url = msg.match(/https?:\/\/\S+/)?.[0]?.replace(/[.,;)]+$/, '');
+      const code = msg.match(/\bcode\s+([A-Z0-9-]{6,})/i)?.[1];
+      if (url && code) return { url, code };
+      throw new Error(msg || 'Microsoft did not return a sign-in code.');
+    }
+    if (r?.success === true) {
+      this.me = r.userData?.displayName ?? this.me;
+      return { signedIn: r.userData?.userPrincipalName ?? r.userData?.displayName ?? 'you' };
+    }
+    throw new Error(typeof r?.error === 'string' ? r.error : (r?.message ?? 'Sign-in failed.'));
+  }
+
+  async logout() {
+    await this.call('logout');
+    this.me = undefined;
   }
 
   /** The signed-in user's name, so a 1:1 chat is labelled with the other person. */
@@ -107,7 +146,7 @@ export class Ms365Connector implements Connector {
   async testConnection() {
     try {
       const r = await this.call('verify-login');
-      if (!r?.success) return { ok: false as const, error: 'Not signed in to Microsoft 365. Run npm run m365:login.', needsReauth: true };
+      if (!r?.success) return { ok: false as const, error: 'Not signed in to Microsoft 365. Type /connect to sign in.', needsReauth: true };
       this.me = r.userData?.displayName ?? '';
       return { ok: true as const, actingAs: r.userData?.userPrincipalName ?? r.userData?.displayName ?? 'you' };
     } catch (e) {

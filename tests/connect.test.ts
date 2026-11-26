@@ -101,6 +101,16 @@ describe('/connect', () => {
     expect(calls).toEqual(['start m365 {"work":true}', 'finish m365', 'start m365 {"work":true,"deviceCode":true}', 'finish m365']);
   });
 
+  it('Microsoft 365: "Use a code instead" switches a browser sign-in to a code', async () => {
+    const { hooks, calls } = fakeHooks({ start: [{ how: 'browser' }, { how: 'code', url: 'https://microsoft.com/devicelogin', code: 'ABCD1234' }] });
+    const session = new Session({ connections: [], audit: audit(), connect: hooks });
+    await session.handle({ type: 'submit', text: '/connect' });
+    await session.handle({ type: 'answer', choiceId: 'm365' });
+    expect(signinOf(await session.handle({ type: 'answer', choiceId: 'personal' }))).toMatchObject({ how: 'browser', alt: { id: 'code', label: 'Use a code instead' } });
+    expect(signinOf(await session.handle({ type: 'answer', choiceId: 'code' }))).toMatchObject({ how: 'code', code: 'ABCD1234' });
+    expect(calls).toEqual(['start m365 {"work":false}', 'cancel m365', 'start m365 {"work":false,"deviceCode":true}']);
+  });
+
   it('cancelling a sign-in stops it, and the late result is dropped', async () => {
     let fail!: (e: Error) => void;
     const pending = new Promise<string>((_, reject) => (fail = reject));

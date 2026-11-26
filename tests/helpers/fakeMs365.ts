@@ -40,12 +40,31 @@ const PEOPLE = [
   { displayName: 'Meera Iyer', scoredEmailAddresses: [{ address: 'meera@contoso.example' }] },
 ];
 
+/**
+ * Sign-in state, shared by every fake server made with it (like the real server's token cache).
+ * `login` is how the `login` tool behaves when signed out: the browser comes back signed in, a device
+ * code is issued (the user "enters" it with `enterCode`), or the organisation blocks the app.
+ */
+export interface FakeMs365State {
+  signedIn: boolean;
+  login: 'browser' | 'code' | 'blocked';
+  codeIssued?: boolean;
+}
+
 export interface FakeMs365 {
   server: Server;
   calls: { name: string; args: Record<string, any> }[];
+  state: FakeMs365State;
 }
 
-export function createFakeMs365(): FakeMs365 {
+const USER = { displayName: 'Priya Nair', userPrincipalName: 'priya@contoso.example' };
+
+/** The user types the device code on Microsoft's page. */
+export const enterCode = (state: FakeMs365State) => {
+  if (state.codeIssued) state.signedIn = true;
+};
+
+export function createFakeMs365(state: FakeMs365State = { signedIn: true, login: 'browser' }): FakeMs365 {
   const calls: FakeMs365['calls'] = [];
   const server = new Server({ name: 'fake-ms365', version: '0' }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [] }));
@@ -57,7 +76,21 @@ export function createFakeMs365(): FakeMs365 {
     const term = String(a.search ?? '').replace(/"/g, '').toLowerCase();
     switch (name) {
       case 'verify-login':
-        return ok({ success: true, message: 'Login successful', userData: { displayName: 'Priya Nair', userPrincipalName: 'priya@contoso.example' } });
+        return ok(state.signedIn ? { success: true, message: 'Login successful', userData: USER } : { success: false, message: 'No valid token found' });
+      case 'login':
+        if (state.signedIn) return ok({ status: 'Already logged in', success: true, message: 'Login successful', userData: USER });
+        if (state.login === 'browser') {
+          state.signedIn = true;
+          return ok({ status: 'Login successful', success: true, message: 'Login successful', userData: USER });
+        }
+        if (state.login === 'code') {
+          state.codeIssued = true;
+          return ok({ error: 'device_code_required', message: 'To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code FAKE12345 to authenticate.' });
+        }
+        return ok({ error: 'Authentication failed: AADSTS65001: The user or administrator has not consented to use the application.' });
+      case 'logout':
+        state.signedIn = false;
+        return ok({ message: 'Logged out successfully' });
       case 'list-todo-task-lists':
         return ok({ value: [{ id: 'list-1', displayName: 'Tasks' }, { id: 'list-2', displayName: 'Work' }] });
       case 'list-mail-messages':
@@ -101,5 +134,5 @@ export function createFakeMs365(): FakeMs365 {
         return fail(`Unknown tool ${name}`);
     }
   });
-  return { server, calls };
+  return { server, calls, state };
 }
