@@ -6,8 +6,9 @@ Tickets go to your Jira Cloud site through Atlassian's Rovo MCP server: type `/c
 
 ## Desktop app (the main way to use it)
 
-A tray app with a global hotkey, as in the plan. Press **Ctrl+Shift+Space** (falls back to
-Ctrl+Alt+Space, then Ctrl+Alt+J if another app owns it; the terminal prints which one it got).
+A tray app with a global hotkey, as in the plan, on Windows and macOS. Press **Ctrl+Shift+Space** on
+Windows (falls back to Ctrl+Alt+Space, then Ctrl+Alt+J if another app owns it) or **⌥Space** on a Mac
+(then ⌘⇧Space, then ⌃⌥Space). The terminal prints which one it got; `HOTKEY` in `.env` picks your own.
 It opens as a small rounded input bar. Type a request and press Enter: the window grows downward to
 show questions (answer with the buttons, the number keys, or by typing), then the result with a link.
 **Esc** hides it; clicking elsewhere also hides it and your place is kept. The tray icon has the menu.
@@ -19,6 +20,11 @@ npm run desktop         # builds, then starts the tray app
 npm run smoke:desktop   # launches once, checks the window and connections, creates nothing
 ```
 
+- **macOS:** it lives in the menu bar (no Dock icon) and opens over full-screen apps and on every
+  desktop. Shortcuts use ⌘ (⌘N new chat, ⌘H history, ⌘V paste); **Esc** hands the keyboard back to the
+  app you were in. Taking a screenshot needs the Screen Recording permission: the first try says where
+  to turn it on (System Settings > Privacy & Security > Screen & System Audio Recording), then restart
+  the app. While developing, macOS lists it as *Electron*.
 - **Gemini:** copy `.env.example` to `.env`, put your key in `GEMINI_API_KEY`, and restart. Without it,
   requests are read by built-in rules. The key stays in `.env` (git-ignored), never on a command line.
 - **Create without asking** (tray menu, on by default): a complete, valid draft is created immediately.
@@ -32,17 +38,17 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
 - **Reasoning (needs the Gemini key):** it answers questions, asks one clarifying question when a
   request is vague, or drafts a ticket and says why. Jira's own data still validates every value, and
   a project it picked itself is confirmed with you first.
-- **History:** the clock button in the bar, `Ctrl+H`, or typing `history` lists every ticket you have
+- **History:** the clock button in the bar, `Ctrl+H` (⌘H on a Mac), or typing `history` lists every ticket you have
   created from the app, newest first and grouped by day. Enter or a click opens it in Jira. It reads
   the local audit log (`data/audit.jsonl`).
 - **Conversation:** the chat stays on screen. While a draft is open, tell it what to change ("make it
   highest", "add that it started yesterday") or ask a question; say **create it** or **cancel**. Those
   two are matched by fixed rules, not by the model, so the AI cannot trigger a write. A draft that is
-  being discussed is never auto-created. Type `new` or press `Ctrl+N` to start over.
+  being discussed is never auto-created. Type `new` or press `Ctrl+N` (⌘N) to start over.
 - **Screenshots:** say "I have an error on this page" and it asks "Can I take a screenshot?". Only
   the **Take a screenshot** button captures (the window hides first). The image appears as a chip in
   the bar and goes to Gemini only when you press Enter. `Ctrl+V` (after `Win+Shift+S`) and
-  drag-and-drop make the same chip. Gemini reads the error and drafts the ticket from it. The image
+  drag-and-drop make the same chip (on a Mac, ⌃⇧⌘4 then ⌘V). Gemini reads the error and drafts the ticket from it. The image
   is not attached to the Jira ticket yet, and free-tier Gemini may use prompts to improve Google
   products, so mind what is on screen.
 - Not built yet: installer and auto-update, running the core in a separate process, a connections

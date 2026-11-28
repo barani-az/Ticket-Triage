@@ -246,6 +246,9 @@
 <script>
 const GLASS = document.documentElement.classList.contains('glass');
 const PAD = GLASS ? 0 : 16;
+// Shortcuts use ⌘ on a Mac and Ctrl elsewhere, and are written the way each platform writes them.
+const MAC = /Mac/.test(navigator.platform);
+const MOD = MAC ? '⌘' : 'Ctrl+';
 const input = document.getElementById('input');
 const out = document.getElementById('out');
 const foot = document.getElementById('foot');
@@ -378,7 +381,7 @@ function hint() {
     : cardAct ? [['Enter', 'create'], ['Esc', 'close']]
     : histOpen ? [['↑↓', 'move'], ['Enter', 'open'], ['Esc', 'close']]
     : suggestOpen ? [['↑↓', 'move'], ['Enter', 'use'], ['Esc', 'close']]
-    : [['Enter', 'send'], ...(out.childElementCount ? [['Ctrl+N', 'new']] : []), ['Esc', 'close']];
+    : [['Enter', 'send'], ...(out.childElementCount ? [[MOD + 'N', 'new']] : []), ['Esc', 'close']];
   document.getElementById('keys').replaceChildren(...keys.map(([a, b]) => el('span', {}, kbd(a), b)));
 }
 
@@ -471,7 +474,8 @@ function renderAssistant(m) {
     if (!(bridge && bridge.capture)) yes.disabled = true;
     yes.addEventListener('click', async () => {
       yes.disabled = true; no.disabled = true; setBusy(true);
-      const img = await bridge.capture().catch(() => null);
+      const shot = await bridge.capture().catch(() => null);
+      const img = typeof shot === 'string' ? shot : null;
       setBusy(false);
       if (img) {
         row.remove();
@@ -486,7 +490,7 @@ function renderAssistant(m) {
         add(preview);
       } else {
         yes.disabled = false; no.disabled = false;
-        note('warn', 'Capture', 'Could not take a screenshot. You can describe it, or paste one with Ctrl+V.');
+        note('warn', 'Capture', (shot && shot.error) || 'Could not take a screenshot. You can describe it, or paste one with ' + MOD + 'V.');
       }
       input.focus();
     });
@@ -673,7 +677,7 @@ sendBtn.addEventListener('click', () => { if (busy) return; const t = input.valu
 document.getElementById('newchat').addEventListener('click', () => { newChat(); input.focus(); });
 document.getElementById('closebtn').addEventListener('click', () => { if (bridge) bridge.hide(); });
 
-// Paste (Ctrl+V after Win+Shift+S) or drop an image onto the window: it becomes the same chip as a captured screenshot.
+// Paste (Ctrl+V after Win+Shift+S; on a Mac ⌘V after ⌃⇧⌘4) or drop an image onto the window: it becomes the same chip as a captured screenshot.
 input.addEventListener('paste', async e => {
   const f = imageFile(e.clipboardData && e.clipboardData.files);
   if (!f) return;
@@ -715,8 +719,9 @@ input.addEventListener('keydown', e => {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { if (suggestOpen || histOpen) closeSuggestions(); else if (bridge) bridge.hide(); }
-  if (e.ctrlKey && e.key.toLowerCase() === 'h') { e.preventDefault(); histOpen ? closeSuggestions() : showHistory(); }
-  if (e.ctrlKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newChat(); }
+  const mod = MAC ? e.metaKey : e.ctrlKey;
+  if (mod && e.key.toLowerCase() === 'h') { e.preventDefault(); histOpen ? closeSuggestions() : showHistory(); }
+  if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); newChat(); }
   // With an empty input, a digit picks the matching choice.
   if (pending && input.value === '' && /^[1-9]$/.test(e.key)) {
     const o = opts[Number(e.key) - 1];
@@ -749,6 +754,10 @@ if (bridge && bridge.onAvail) bridge.onAvail(h => {
   document.documentElement.style.setProperty('--out-max', Math.max(160, h - (GLASS ? 60 : 62) - 36 - 2 * PAD) + 'px');
   document.documentElement.style.setProperty('--chat-max', Math.max(300, h - 2 * PAD) + 'px');
 });
+if (MAC) {
+  document.getElementById('newchat').title = 'New chat (⌘N)';
+  for (const a of ['title', 'aria-label']) document.getElementById('hist').setAttribute(a, 'History (⌘H)');
+}
 loadStatus(); hint(); input.focus();
 </script>
 </body>

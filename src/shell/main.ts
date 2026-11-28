@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, Tray } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, systemPreferences, Tray } from 'electron';
 import { log } from '../core/log.js';
 import type { UiToCore } from '../core/session.js';
 import { createApp, type App } from '../server/app.js';
 import { recordDemo } from './demo.js';
 import { parseEnv } from './env.js';
-import { registerHotkey } from './hotkey.js';
+import { defaultHotkeys, hotkeyLabel as labelOf, registerHotkey } from './hotkey.js';
 
 /**
  * Tray app: a global hotkey opens a small chat window; typing a request creates the ticket
@@ -15,12 +15,13 @@ import { registerHotkey } from './hotkey.js';
  */
 // "Glass" = the window sits on Windows acrylic (Windows 11 build 22621+). Otherwise it falls back to a
 // transparent window with a CSS shadow, which needs 16px of padding around the page.
+const MAC = process.platform === 'darwin';
 const GLASS = process.platform === 'win32' && Number(process.getSystemVersion().split('.')[2]) >= 22621 && process.env.NO_GLASS !== '1';
 const PAD = GLASS ? 0 : 16;
 const WIDTH = 668 + 2 * PAD;
 const MIN_HEIGHT = (GLASS ? 60 : 62) + 2 * PAD; // just the input bar (plus its hairline when there is no glass)
 const MAX_HEIGHT = 700;
-const HOTKEYS = [process.env.HOTKEY, 'Control+Shift+Space', 'Control+Alt+Space', 'Control+Alt+J'].filter(Boolean) as string[];
+const HOTKEYS = defaultHotkeys(process.platform, process.env.HOTKEY);
 const SMOKE = process.env.SMOKE === '1';
 const DEMO = process.env.DEMO === '1';
 const DEMO_HEIGHT = 600; // fixed while recording, so every captured frame is the same size
@@ -80,6 +81,11 @@ function createWindow() {
       sandbox: true,
     },
   });
+  if (MAC) {
+    // Like Spotlight: over full-screen apps and on every desktop (Space), above normal windows.
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setAlwaysOnTop(true, 'floating');
+  }
   win.on('will-resize', (e) => e.preventDefault()); // only the page decides the height
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query: { glass: GLASS ? '1' : '0' } });
   // Links (e.g. the created issue) open in the default browser; the app window never navigates.
@@ -109,21 +115,44 @@ function placeWindow() {
   win.webContents.send('assistant:avail', Math.min(MAX_HEIGHT, availableHeight));
 }
 
+/** Hide the window. On a Mac, also hand the keyboard back to the app that was in front (Windows does that itself). */
+function hideWindow() {
+  win?.hide();
+  if (MAC) app.hide();
+}
+
 function showWindow() {
   if (!win) return;
   log('window', 'shown');
   placeWindow();
   win.show();
+  if (MAC) app.focus({ steal: true }); // a menu-bar app must make itself active to get the keyboard
   win.focus();
   win.webContents.send('assistant:focus');
 }
 
 function toggleWindow() {
-  if (win?.isVisible() && win.isFocused()) win.hide();
+  if (win?.isVisible() && win.isFocused()) hideWindow();
   else showWindow();
 }
 
 function trayIcon() {
+  // The Mac menu bar wants a black-and-clear "template" image that macOS recolours for light and dark
+  // menu bars: a square outline with a dot, drawn at 2x for Retina.
+  if (MAC) {
+    const size = 32;
+    const buf = Buffer.alloc(size * size * 4);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const edge = x >= 4 && x < 28 && y >= 4 && y < 28 && (x < 8 || x >= 24 || y < 8 || y >= 24);
+        const dot = x >= 13 && x < 19 && y >= 13 && y < 19;
+        if (edge || dot) buf.set([0, 0, 0, 255], (y * size + x) * 4);
+      }
+    }
+    const img = nativeImage.createFromBitmap(buf, { width: size, height: size, scaleFactor: 2 });
+    img.setTemplateImage(true);
+    return img;
+  }
   // 16x16 solid accent square with a lighter centre, drawn as a raw BGRA bitmap (no asset file needed).
   const size = 16;
   const buf = Buffer.alloc(size * size * 4);
@@ -176,8 +205,17 @@ function buildTray() {
  * "Take a screenshot" button calls this, after the assistant has asked and the user has said yes.
  * Nothing is written to disk; the image lives in memory until it is sent or discarded.
  */
-async function captureScreen(): Promise<string | null> {
+async function captureScreen(): Promise<string | { error: string } | null> {
   if (!win) return null;
+  if (MAC && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+    // Asking once makes macOS list the app (and prompt the first time); the permission applies after a restart.
+    await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }).catch(() => undefined);
+    log('window', 'screenshot needs the Screen Recording permission');
+    return {
+      error:
+        'macOS needs your permission first: System Settings > Privacy & Security > Screen & System Audio Recording, turn this app on, then restart it. Or paste a screenshot with ⌘V (⌃⇧⌘4 copies one).',
+    };
+  }
   log('window', 'taking a screenshot (window hidden meanwhile)');
   const display = screen.getDisplayMatching(win.getBounds());
   const wasVisible = win.isVisible();
@@ -215,7 +253,7 @@ function wireIpc() {
   });
   ipcMain.handle('assistant:connections', () => core!.describe());
   ipcMain.handle('assistant:audit', () => core!.audit.list());
-  ipcMain.on('assistant:hide', () => (log('window', 'hidden (Esc)'), win?.hide()));
+  ipcMain.on('assistant:hide', () => (log('window', 'hidden (Esc)'), hideWindow()));
   // The page reports how tall it is; the window grows or shrinks to match, anchored at the top.
   ipcMain.on('assistant:resize', (_e, height: unknown) => {
     if (!win || DEMO || typeof height !== 'number' || !Number.isFinite(height)) return;
@@ -250,6 +288,7 @@ async function smokeTest() {
     if (process.env.SMOKE_NOSHOT === '1') return; // never crop the screen when something else may be on top
     let png: Buffer;
     try {
+      if (MAC) throw new Error('no acrylic on a Mac: the page capture is exact and needs no screen permission');
       const b = win!.getBounds();
       const d = screen.getDisplayMatching(b);
       const f = d.scaleFactor;
@@ -344,7 +383,14 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('will-quit', () => globalShortcut.unregisterAll());
 
+  app.on('activate', showWindow); // opened again from Finder or Spotlight while running (Mac)
+
   app.whenReady().then(async () => {
+    if (MAC) {
+      app.dock?.hide(); // a menu-bar app, like on Windows where it lives in the tray
+      // The Edit menu makes ⌘C, ⌘V, ⌘X, ⌘A and ⌘Z work in the text box. No Hide item, so ⌘H opens the history.
+      Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: app.name, submenu: [{ role: 'quit' }] }, { role: 'editMenu' }]));
+    }
     if (SMOKE) settings.autoCreate = false;
     if (process.env.SMOKE_THEME === 'light' || process.env.SMOKE_THEME === 'dark') nativeTheme.themeSource = process.env.SMOKE_THEME;
     try {
@@ -360,7 +406,7 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
 
     const hk = registerHotkey(globalShortcut, HOTKEYS, toggleWindow);
-    hotkeyLabel = hk.ok ? hk.accelerator.replace('Control', 'Ctrl') : 'no hotkey (all combinations taken)';
+    hotkeyLabel = hk.ok ? labelOf(hk.accelerator, process.platform) : 'no hotkey (all combinations taken)';
 
     buildTray();
     console.log(`Hotkey: ${hotkeyLabel}  |  LLM: ${core.llmEnabled ? 'on' : 'built-in rules'}  |  Create without asking: ${settings.autoCreate}`);
