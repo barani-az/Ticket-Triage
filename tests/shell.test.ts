@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseEnv } from '../src/shell/env.js';
-import { registerHotkey, type ShortcutApi } from '../src/shell/hotkey.js';
+import { defaultHotkeys, hotkeyLabel, registerHotkey, type ShortcutApi } from '../src/shell/hotkey.js';
 
 const fakeApi = (taken: string[]): ShortcutApi & { registered: string[] } => {
   const registered: string[] = [];
@@ -33,6 +33,20 @@ describe('registerHotkey', () => {
 
   it('reports what it tried when nothing works', () => {
     expect(registerHotkey(fakeApi(['a', 'b']), ['a', 'b'], () => undefined)).toEqual({ ok: false, tried: ['a', 'b'] });
+  });
+});
+
+describe('hotkeys per platform', () => {
+  it('uses Option+Space on a Mac and Ctrl+Shift+Space on Windows, with HOTKEY from .env first', () => {
+    expect(defaultHotkeys('darwin')[0]).toBe('Alt+Space');
+    expect(defaultHotkeys('win32')[0]).toBe('Control+Shift+Space');
+    expect(defaultHotkeys('darwin', 'Command+J')[0]).toBe('Command+J');
+  });
+
+  it('writes them the way each platform does', () => {
+    expect(hotkeyLabel('Alt+Space', 'darwin')).toBe('⌥Space');
+    expect(hotkeyLabel('Command+Shift+Space', 'darwin')).toBe('⌘⇧Space');
+    expect(hotkeyLabel('Control+Shift+Space', 'win32')).toBe('Ctrl+Shift+Space');
   });
 });
 
