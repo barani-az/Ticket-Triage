@@ -6,13 +6,13 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:">
 <title>AI Task Assistant</title>
 <script>
-  // "Glass" mode = the window sits on Windows acrylic, so surfaces are translucent and the window fills itself.
+  // "Glass" mode = the system blurs what is behind the window (Windows acrylic, macOS vibrancy), so surfaces are translucent and the window fills itself.
   if (new URLSearchParams(location.search).get('glass') === '1') document.documentElement.classList.add('glass');
 </script>
 <style>
   /*
    * Ledger: paper and ink. A serif for what you read, mono for keys and statuses, one vermilion accent.
-   * Falls back to solid paper; in glass mode the surfaces turn translucent over Windows acrylic.
+   * Falls back to solid paper; in glass mode the surfaces turn translucent over the system's blur.
    */
   :root {
     color-scheme: light dark;
@@ -36,7 +36,7 @@
       --shadow: 0 12px 28px rgba(0, 0, 0, .55), 0 1px 2px rgba(0, 0, 0, .5);
     }
   }
-  /* Glass: translucent paper over the acrylic blur. Kept fairly opaque so text stays readable on any wallpaper. */
+  /* Glass: translucent paper over the system's blur. Kept fairly opaque so text stays readable on any wallpaper. */
   html.glass { --bg: rgba(252, 251, 247, .74); --layer: rgba(255, 255, 255, .55); --foot: rgba(244, 241, 233, .55); --rule: rgba(27, 26, 23, .16); }
   @media (prefers-color-scheme: dark) {
     html.glass { --bg: rgba(26, 25, 21, .68); --layer: rgba(255, 255, 255, .06); --foot: rgba(0, 0, 0, .22); }

@@ -21,7 +21,7 @@ npm run smoke:desktop   # launches once, checks the window and connections, crea
 ```
 
 - **macOS:** it lives in the menu bar (no Dock icon) and opens over full-screen apps and on every
-  desktop. Shortcuts use ⌘ (⌘N new chat, ⌘H history, ⌘V paste); **Esc** hands the keyboard back to the
+  desktop. Like on Windows 11, the window is frosted glass (`NO_GLASS=1` in `.env` turns it off). Shortcuts use ⌘ (⌘N new chat, ⌘H history, ⌘V paste); **Esc** hands the keyboard back to the
   app you were in. Taking a screenshot needs the Screen Recording permission: the first try says where
   to turn it on (System Settings > Privacy & Security > Screen & System Audio Recording), then restart
   the app. While developing, macOS lists it as *Electron*.

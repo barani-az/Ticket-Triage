@@ -13,17 +13,19 @@ import { defaultHotkeys, hotkeyLabel as labelOf, registerHotkey } from './hotkey
  * (asking only for what is missing). The core runs in this process for now; the plan moves it
  * into a utility process.
  */
-// "Glass" = the window sits on Windows acrylic (Windows 11 build 22621+). Otherwise it falls back to a
-// transparent window with a CSS shadow, which needs 16px of padding around the page.
 const MAC = process.platform === 'darwin';
-const GLASS = process.platform === 'win32' && Number(process.getSystemVersion().split('.')[2]) >= 22621 && process.env.NO_GLASS !== '1';
+const SMOKE = process.env.SMOKE === '1';
+const DEMO = process.env.DEMO === '1';
+// "Glass" = the system blurs what is behind the window: acrylic on Windows 11 (build 22621+), vibrancy on a
+// Mac. Otherwise it falls back to a transparent window with a CSS shadow, which needs 16px of padding.
+// The demo recorder and the smoke test capture the page, which can't see the Mac's blur, so they use the fallback there.
+const ACRYLIC = process.platform === 'win32' && Number(process.getSystemVersion().split('.')[2]) >= 22621;
+const GLASS = (ACRYLIC || (MAC && !DEMO && !SMOKE)) && process.env.NO_GLASS !== '1';
 const PAD = GLASS ? 0 : 16;
 const WIDTH = 668 + 2 * PAD;
 const MIN_HEIGHT = (GLASS ? 60 : 62) + 2 * PAD; // just the input bar (plus its hairline when there is no glass)
 const MAX_HEIGHT = 700;
 const HOTKEYS = defaultHotkeys(process.platform, process.env.HOTKEY);
-const SMOKE = process.env.SMOKE === '1';
-const DEMO = process.env.DEMO === '1';
 const DEMO_HEIGHT = 600; // fixed while recording, so every captured frame is the same size
 
 const dataDir = app.isPackaged ? app.getPath('userData') : path.join(app.getAppPath(), 'data');
@@ -66,11 +68,12 @@ function createWindow() {
     useContentSize: true,
     show: false,
     frame: false,
-    // Glass: Windows draws the blur, corners and shadow. Otherwise the page draws its own corners and shadow.
+    // Glass: the system draws the blur, corners and shadow. Otherwise the page draws its own corners and shadow.
     transparent: !GLASS,
     hasShadow: GLASS,
-    ...(GLASS ? { backgroundMaterial: 'acrylic' as const, backgroundColor: '#00000000', roundedCorners: true } : {}),
-    resizable: GLASS, // the native shadow and corners need a resizable frame; user resizing is blocked below
+    ...(GLASS && MAC ? { vibrancy: 'popover' as const, visualEffectState: 'active' as const, backgroundColor: '#00000000', roundedCorners: true } : {}),
+    ...(GLASS && !MAC ? { backgroundMaterial: 'acrylic' as const, backgroundColor: '#00000000', roundedCorners: true } : {}),
+    resizable: GLASS && !MAC, // Windows: the native shadow and corners need a resizable frame; user resizing is blocked below
     maximizable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
